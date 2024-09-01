@@ -13,7 +13,7 @@ def add_message_to_history(role, user_id, user_name, message_content, user_messa
 		user_message_histories[user_id].append({'role': role, 'name': user_name, 'content': message_content})
 		# Fix the calculation of total_character_count to handle NoneType
 		total_character_count = sum(len(entry['content']) for entry in user_message_histories.get(user_id, []) if entry is not None)
-		while total_character_count > 6000:
+		while total_character_count > config["History_Length"]:
 			oldest_entry = user_message_histories[user_id].pop(0)
 			total_character_count -= len(oldest_entry['content'])
 		with open(history_file_name, 'w') as file:

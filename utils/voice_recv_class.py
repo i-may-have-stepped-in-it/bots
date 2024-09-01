@@ -3,7 +3,7 @@ import asyncio
 import torch
 import torchaudio
 import nltk
-nltk.download('punkt')
+nltk.download('all')
 from nltk.tokenize import sent_tokenize
 import discord
 from discord.ext import voice_recv
@@ -45,7 +45,7 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 				# Use the captured loop to ensure the correct event loop is used
 				asyncio.run_coroutine_threadsafe(self.process_recognized_speech(text, ctx), self.loop)
 
-		sink = SpeechRecognitionSink(default_recognizer="whisper", text_cb=on_speech_recognized)
+		sink = SpeechRecognitionSink(default_recognizer=config["recognizer"], text_cb=on_speech_recognized)
 		self.listen(sink)	
 
 	@classmethod
@@ -87,8 +87,8 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 											chunks.append(wrapped_line.strip())
 									
 									# Send the chunks as separate messages
-									for chunk in chunks:
-										await message.channel.send(chunk)
+									# for chunk in chunks:
+									# 	await message.channel.send(chunk)
 										
 					else:
 						logging.error("No response text generated.")
@@ -189,20 +189,14 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 
 			# Iterate over each sentence
 			for sentence in sentences:
-				# Split sentence into words
-				words = nltk.word_tokenize(sentence)
-
-				# Iterate over each word in the sentence
-				for word in words:
-					# Check if adding the current word to the current chunk would exceed the maximum length
-					if len(current_chunk) + len(word) <= max_chunk_length:
-						# Add the current word to the current chunk if it won't exceed the maximum  length
-						current_chunk += word + ' '
-					else:
-						# If adding the current word would exceed the maximum length, split the chunk at the last space
-						last_space_index = current_chunk.rfind(' ')
-						chunks.append(current_chunk[:last_space_index].strip())
-						current_chunk = word + ' '
+				# Check if length is greater than 1000
+				if len(sentence) <= max_chunk_length:
+					current_chunk += sentence + ' '
+				else:
+					# If adding the current word would exceed the maximum length, split the chunk at the last space
+					last_space_index = current_chunk.rfind(' ')
+					chunks.append(current_chunk[:last_space_index].strip())
+					current_chunk = sentence + ' '
 
 			# Append the last chunk
 			if current_chunk:
