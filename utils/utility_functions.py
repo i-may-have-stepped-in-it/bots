@@ -1,6 +1,5 @@
 from functools import cache
-from pyexpat import model
-from openai import AsyncOpenAI, completions
+from openai import AsyncOpenAI
 import logging
 import asyncio
 from io import BytesIO
@@ -136,18 +135,24 @@ async def try_generate_response(client, config, user_id, user_message_histories,
 			if message and isinstance(message.content, str) and prompt is None:
 				messages.append({'role': 'user', 'content': message.content})
 				logging.info("Included message content from provided message.")
-			logging.info(f"Sending data to OpenAI: {messages}")
 
 			# Include prompt if provided and not None
 			if isinstance(prompt, str):
 				logging.info("Using provided prompt:")
 				logging.debug(prompt)
-				messages.append({'role': 'system', 'content': prompt})
+				messages.append({'role': 'user', 'content': prompt})
+
+			# Wrap the messages in a list if it's not already
+			if not isinstance(messages, list):
+				messages = [messages]
+				
+			logging.info(f"Sending data to OpenAI: {messages}")
 
 			# Send request to OpenAI
 			response = await client.chat.completions.create(
 				messages=messages,
-				model=config["OpenaiModel"]
+				model=config["OpenaiModel"],
+				user=config["OpenaiUser"]
 			)
 
 			logging.info("API response received.")

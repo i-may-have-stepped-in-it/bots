@@ -299,6 +299,7 @@ def prepare_json_payload(config, prompt, upscale):
 			"height": config.get("SDHeight"),
 			"negative_prompt": config.get("SDNegativePrompt"),
 			"sampler_index": config.get("SDSampler"),
+			"scheduler": config.get("SDScheduler"),
 			"cfg_scale": config.get("SDConfig"),
 			"self_attention": "yes",
 			"enable_hr": upscale,

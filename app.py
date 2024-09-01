@@ -247,8 +247,8 @@ async def handle_messages(config, message, user_message_histories, history_file_
 					await join_voice_channel(message, message.author.voice.channel.id)
 				except Exception as e:
 					logging.error(f"Error occurred while joining voice channel: {e}")
-					await message.channel.send("I was unable to join voice channel.")
-					await message.channel.send("Please ensure that I have proper permissions to join voice channels.")
+					# await message.channel.send("I was unable to join voice channel.")
+					# await message.channel.send("Please ensure that I have proper permissions to join voice channels.")
 					return
 				await message.add_reaction("👍")
 				await message.channel.send("Joined voice channel")
