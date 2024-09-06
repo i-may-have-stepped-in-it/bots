@@ -1,14 +1,14 @@
 openai
 Pillow
 requests
-torch==2.2.2
+torch
 numpy
 libnacl
 pynacl
 watchdog
 silero
 omegaconf 
-torchaudio==2.2.2
+torchaudio
 aiohttp
 speechrecognition
 ffmpeg
@@ -17,3 +17,4 @@ soundfile
 nltk
 sphinx
 pocketsphinx
+pexpect

@@ -12,6 +12,7 @@ from watchdog.events import FileSystemEventHandler
 from logging.handlers import TimedRotatingFileHandler
 import aiohttp
 from discord.ext.voice_recv.extras import *
+import os
 
 discord.opus._load_default()
 # Define a function to load the config
@@ -88,23 +89,32 @@ def log_setup(config):
 		]
 	)
 
-async def generate_response(config, user_id, user_message_histories, message=None, additional_instructions=None, prompt=None, include_personality=True, upscale=False):
+async def generate_response(config, user_id, discord_username, user_message_histories, message=None, additional_instructions=None, prompt=None, include_personality=True, upscale=False):
 	try:
-		client = AsyncOpenAI(base_url=config["OpenAPIEndpoint"], api_key=config["OpenAPIKey"])
-		return await try_generate_response(client, config, user_id, user_message_histories, message, additional_instructions, prompt, include_personality)
+		# Attempt to use MemGPT as the primary client
+		client = AsyncOpenAI(
+			base_url=config.get("MemGPTEndpoint", config["OpenAPIEndpoint"]),  # Use MemGPTEndpoint if available, fallback to OpenAPIEndpoint
+			api_key=config.get("MemGPTBearer", config["OpenAPIKey"])  # Use MemGPTBearer if available, fallback to OpenAPIKey
+		)
+		response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, include_personality, use_memgpt=True)
+		if response: # Successful response from MemGPT
+			return response
 	except Exception as e:
-		logging.error("An error occurred during OpenAI API call: " + str(e))
-		try:
-			# If primary client fails, try with secondary client
-			if config["SecondaryOpenAPIEndpoint"] and config["SecondaryOpenAPIKey"]:
-				client = AsyncOpenAI(base_url=config["SecondaryOpenAPIEndpoint"], api_key=config["SecondaryOpenAPIKey"])
-				return await try_generate_response(client, config, user_id, user_message_histories, message, additional_instructions, prompt, include_personality)
-		except Exception as e:
-			logging.error(f"An error occurred during second OpenAI API call: {str(e)}")
-			if message:	
-				await message.channel.send("I can't talk right now please try back later.")		
-			raise  # Re-raise the exception to propagate it back to the caller
-async def try_generate_response(client, config, user_id, user_message_histories, message, additional_instructions, prompt, include_personality):
+		logging.error(f"An error occurred during MemGPT API call: {str(e)}")
+
+	# If MemGPT fails, try OpenAI as the secondary client
+	try:
+		if config["SecondaryOpenAPIEndpoint"] and config["SecondaryOpenAPIKey"]:
+			client = AsyncOpenAI(base_url=config["SecondaryOpenAPIEndpoint"], api_key=config["SecondaryOpenAPIKey"])
+			response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, include_personality, use_memgpt=False)
+			if response:
+				return response
+	except Exception as e:
+		logging.error(f"An error occurred during second OpenAI API call: {str(e)}")
+		if message:	
+			await message.channel.send("I can't talk right now please try back later.")		
+	raise  # Re-raise the exception if both MemGPT and OpenAI fail
+async def try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, include_personality, use_memgpt):
 	try:
 			# Determine recent message content
 			recent_message_content = ""
@@ -121,15 +131,15 @@ async def try_generate_response(client, config, user_id, user_message_histories,
 				logging.info("Included additional instructions.")
 
 			# Include personality message
-			if include_personality:
+			if include_personality and not use_memgpt:
 				personality_command = f"You are {config['Personality']}."
 				messages.append({'role': 'system', 'content': personality_command})
 				logging.info("Included personality message.")
 
-			# Include recent message content if prompt is None
-			if recent_message_content and (message is None or recent_message_content != message.content) and prompt is None:
+			if not use_memgpt and recent_message_content and (message is None or recent_message_content != message.content) and prompt is None:
 				messages.append({'role': 'user', 'content': recent_message_content})
 				logging.info("Included recent user message.")
+
 
 			# Include message content if provided and if prompt is None
 			if message and isinstance(message.content, str) and prompt is None:
@@ -145,22 +155,34 @@ async def try_generate_response(client, config, user_id, user_message_histories,
 			# Wrap the messages in a list if it's not already
 			if not isinstance(messages, list):
 				messages = [messages]
-				
-			logging.info(f"Sending data to OpenAI: {messages}")
 
-			# Send request to OpenAI
-			response = await client.chat.completions.create(
-				messages=messages,
-				model=config["OpenaiModel"],
-				user=config["OpenaiUser"]
-			)
+			logging.info(f"Sending data to {'MemGPT' if use_memgpt else 'OpenAI'}: {messages}")
+
+
+			# Send request to OpenAI or MemGPT based on use_memgpt flag
+
+			if use_memgpt:
+				response_data = await send_request_to_memgpt(config, messages, user_id, discord_username)
+				response_text = response_data.get('assistant_message', '')  # Extract assistant message
+
+				# Chunking (adjust if necessary based on MemGPT's response structure)
+				if len(response_text) > 2000:
+					chunks = [response_text[i:i + 2000] for i in range(0, len(response_text), 2000)]
+					return chunks
+				else:
+					return [response_text]
+			else:
+				response = await client.chat.completions.create(
+					messages=messages,
+					model=config["OpenaiModel"],
+				)
 
 			logging.info("API response received.")
 			logging.debug(response)
 
 			# Check the length of the response
 			response_text = response.choices[0].message.content
-			if len(response_text) > 2000:
+			if isinstance(response, str) and len(response_text) > 2000: 
 				# Split the response into chunks of 2000 characters
 				chunks = [response_text[i:i + 2000] for i in range(0, len(response_text), 2000)]
 				return chunks
@@ -171,6 +193,107 @@ async def try_generate_response(client, config, user_id, user_message_histories,
 		logging.error("An error occurred during OpenAI API call: " + str(e))
 		raise  # Re-raise the exception to propagate it back to the caller
 
+# File path to store user data
+USER_DATA_FILE = "memgpt_user_data.json"
+
+# Dictionary to store Discord ID to MemGPT user data
+# Load from file if it exists
+if os.path.exists(USER_DATA_FILE):
+	with open(USER_DATA_FILE, "r") as f:
+		discord_to_memgpt_user = json.load(f)
+else:
+	discord_to_memgpt_user = {}  
+
+
+# Call save_user_data whenever you modify the dictionary
+async def get_or_create_memgpt_user(config, user_id, message):
+	"""Gets or creates a MemGPT user for the given Discord ID."""
+	discord_user_id = user_id
+	if discord_user_id in discord_to_memgpt_user:
+		return discord_to_memgpt_user[discord_user_id]
+
+	headers = {
+		'accept': 'application/json',
+		'authorization': f'Bearer {config["MemGPTBearer"]}',  # Admin Bearer token
+		'content-type': 'application/json'
+	}
+
+	url = f"{config['MemGPTEndpoint']}/admin/users"
+
+	async with aiohttp.ClientSession() as session:
+		async with session.post(url, headers=headers, json={}) as resp: # <--- Change from get to post, remove params=data
+			logging.info(f"MemGPT User Creation Response Status: {resp.status}")
+			logging.info(f"MemGPT User Creation Response Headers: {resp.headers}")
+			logging.info(f"MemGPT User Creation Response Body: {await resp.text()}") 
+			if resp.status == 200:  # Successful user creation
+				response_data = await resp.json()
+
+				# Store user_id and api_key
+				discord_to_memgpt_user[discord_user_id] = {
+					'user_id': response_data['user_id'],
+					'api_key': response_data['api_key']
+				}
+				await save_user_data()
+				return discord_to_memgpt_user[discord_user_id]
+			else:
+				error_text = await resp.text()
+				logging.error(f"MemGPT user creation failed: {error_text}")
+				raise Exception(f"Failed to create MemGPT user: {error_text}")
+
+async def send_request_to_memgpt(config, messages, user_id, discord_username):
+	"""Sends the chat request to MemGPT using the pre-defined agent."""
+
+	memgpt_user_data = await get_or_create_memgpt_user(config, user_id, messages)
+	memgpt_api_key = memgpt_user_data['api_key']
+	memgpt_agent_id = config["MemGPTAgent"]
+	message_content = messages[0]['content']
+
+	headers = {
+		'accept': 'application/json',
+		'authorization': f'Bearer {memgpt_api_key}',
+		'content-type': 'application/json'
+	}
+
+	# Construct the data payload according to MemGPT's API
+	data = {
+		"message": message_content,  # Send as a single string
+		'stream': False,
+		"run_async": False,
+		"stream_steps": False,
+		"stream_tokens": False,
+		"return_message_object": False
+	}
+
+	url = f"{config['MemGPTEndpoint']}/api/agents/{memgpt_agent_id}/messages"
+
+	logging.info(f"Sending data to MemGPT: {data}")
+
+	async with aiohttp.ClientSession() as session:
+		async with session.post(url, headers=headers, json=data) as resp:
+			if resp.status == 200:
+				response_data = await resp.json()
+				logging.info(f"MemGPT response: {response_data}")
+
+				# Accessing the response data
+				messages = response_data.get('messages', [])
+				if messages: 
+					first_message = messages[0]
+					assistant_reply = first_message.get('text', '')
+					print(f"MemGPT Assistant Reply: {assistant_reply}") 
+
+					# Access other fields like this:
+					message_id = first_message.get('id', [''])[0]
+					created_at = first_message.get('created_at')
+			else:
+				error_text = await resp.text()
+				logging.error(f"MemGPT API request failed: {error_text}")
+				raise Exception(f"MemGPT API request failed: {error_text}")
+
+# Function to save user data to JSON file
+async def save_user_data():
+	with open(USER_DATA_FILE, "w") as f:
+		json.dump(discord_to_memgpt_user, f, indent=4)
+			
 async def load_model(config, message): 
 	"""Loads a Stable Diffusion model and updates the config file with the new model name."""
 	async with message.channel.typing():
@@ -203,3 +326,21 @@ async def load_model(config, message):
 			json.dump(config, f, indent=4)
 			f.flush()
 		logging.info ("Model loaded.")
+
+async def teamviewer(config,message):
+	import pexpect
+	# Create a Pexpect object for the SSH connection
+	ssh_conn = pexpect.spawn('ssh bot@192.168.128.134')
+	if ssh_conn.expect('yes/no/fingerprint:'):
+		ssh_conn.sendline('yes')
+
+	# Expect the SSH password prompt
+	if ssh_conn.expect('password:'):
+		# Send the SSH password
+		ssh_conn.sendline('password')
+
+	# Expect the SSH command prompt
+	ssh_conn.expect('[$#]')
+
+	# Send the command to run the update.sh script
+	ssh_conn.sendline('sudo /usr/local/bin/teamviewer.sh')

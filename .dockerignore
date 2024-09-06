@@ -30,3 +30,4 @@ README.md
 **.devcontainer/*
 ./.cache*
 ./.vscode-server*
+**./nltk*

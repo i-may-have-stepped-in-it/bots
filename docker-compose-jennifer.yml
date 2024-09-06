@@ -34,7 +34,7 @@ services:
     container_name: jennifer
     build:
       context: .
-      no_cache: true
+      # no_cache: true
     profiles: [""]
     logging:
       driver: json-file
@@ -42,16 +42,19 @@ services:
         max-file: "3"
         max-size: '10m'
     volumes:
-      - ./config/:/app/config/
+      - ./config:/app/config/
+      - ./config:/app/memgpt_user_data.json
+      - ./nltk_data:/home/appuser/nltk_data
     tty: true # enable colorized logs
     restart: always
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   jennifer-text-backend:
     deploy:
       resources:
