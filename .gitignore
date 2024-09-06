@@ -14,3 +14,4 @@ function storage.py
 set_python_env.sh
 **/jaunch.json
 Jennifer_message_histories.json
+nltk_data/

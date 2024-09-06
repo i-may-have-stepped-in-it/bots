@@ -230,6 +230,12 @@ async def handle_messages(config, message, user_message_histories, history_file_
 			else: 
 				await message.channel.send("I'm sorry, I cannot run that here.")
 				return
+		elif "teamviewer" in message.content.lower():
+			if message.channel.type == discord.ChannelType.private:
+				await print_available_models(config,message)
+			else: 
+				await message.channel.send("I'm sorry, I cannot run that here.")
+				return
 		elif "load model" in message.content.lower():
 			if message.channel.type == discord.ChannelType.private:
 				try:
