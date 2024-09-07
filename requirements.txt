@@ -18,3 +18,4 @@ nltk
 sphinx
 pocketsphinx
 pexpect
+aiofiles

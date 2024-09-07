@@ -133,7 +133,7 @@ async def start_bot():
 			try:
 				# Ignore messages from all bot users
 				if message.author.bot:
-					logging.info("Message is from a Bot.")
+					# logging.info("Message is from a Bot.")
 					return
 				# Handle messages here
 				await handle_messages(config, message, user_message_histories, history_file_name, bot, message_queue,image_queue)
