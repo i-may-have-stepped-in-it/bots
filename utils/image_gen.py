@@ -41,6 +41,7 @@ async def handle_image_generation(config, message, user_message_histories, bot, 
 				bot_name = config["Name"]
 				prompt, upscale, additional_instructions = parse_prompt(message.content, bot_name, config)
 
+
 				# Log the parsed prompt
 				logging.info("Parsed prompt in handle_image_generation:")
 				logging.debug(prompt)
@@ -110,8 +111,11 @@ def parse_prompt(prompt, bot_name, config):
 
 		logging.info("Prompt parsed successfully.")
 		
+		# **Ensure prompt is always a list**
+		prompt = [prompt] 
+		
 		# Construct prompt with additional_instructions, appearance_info, and prompt
-		prompt = json.dumps(additional_instructions + appearance_info) + " " + prompt
+		prompt = json.dumps(additional_instructions + appearance_info) + " " + " ".join(prompt)
 		logging.info(prompt)
 		
 		return prompt, upscale, additional_instructions
@@ -123,8 +127,11 @@ def parse_prompt(prompt, bot_name, config):
 async def generate_openai_response(config, user_id, user_message_histories, message, prompt, upscale, additional_instructions):
 	try:
 		
+		# Construct the message for generate_response
+		message_dict = {'role': 'user', 'content': message.content} if message else None  # Create the message dictionary
+		
 		# Generate response using OpenAI API with additional instructions
-		response = await generate_response(config, user_id, user_message_histories, message, prompt=prompt, include_personality=False, upscale=upscale, additional_instructions=additional_instructions)
+		response = await generate_response(config, user_id, user_message_histories, message_dict, prompt=prompt, include_personality=False, upscale=upscale, additional_instructions=additional_instructions, use_memgpt=False)
 		logging.info("OpenAI response generated successfully in generate_openai_response.")
 		logging.debug(response)
 		
