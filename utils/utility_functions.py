@@ -90,14 +90,15 @@ def log_setup(config):
 		]
 	)
 
-async def generate_response(config, user_id, discord_username, user_message_histories, message=None, additional_instructions=None, prompt=None, include_personality=True, upscale=False):
+async def generate_response(config, user_id, discord_username, user_message_histories, use_memgpt, message=None, additional_instructions=None, prompt=None, include_personality=True, upscale=False):
 	try:
+		client=None
 		# Attempt to use MemGPT as the primary client
-		client = AsyncOpenAI(
-			base_url=config.get("MemGPTEndpoint", config["OpenAPIEndpoint"]),  # Use MemGPTEndpoint if available, fallback to OpenAPIEndpoint
-			api_key=config.get("MemGPTBearer", config["OpenAPIKey"])  # Use MemGPTBearer if available, fallback to OpenAPIKey
-		)
-		response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, include_personality, use_memgpt=True)
+		# client = AsyncOpenAI(
+		# 	base_url=config.get("MemGPTEndpoint", config["OpenAPIEndpoint"]),  # Use MemGPTEndpoint if available, fallback to OpenAPIEndpoint
+		# 	api_key=config.get("MemGPTBearer", config["OpenAPIKey"])  # Use MemGPTBearer if available, fallback to OpenAPIKey
+		# )
+		response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, use_memgpt, message, additional_instructions, prompt, include_personality)
 		if response: # Successful response from MemGPT
 			return response
 	except Exception as e:
@@ -107,7 +108,7 @@ async def generate_response(config, user_id, discord_username, user_message_hist
 	try:
 		if config["SecondaryOpenAPIEndpoint"] and config["SecondaryOpenAPIKey"]:
 			client = AsyncOpenAI(base_url=config["SecondaryOpenAPIEndpoint"], api_key=config["SecondaryOpenAPIKey"])
-			response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, include_personality, use_memgpt=False)
+			response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, include_personality,use_memgpt=False)
 			if response:
 				return response
 	except Exception as e:
@@ -147,10 +148,12 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 				logging.info("Included message content from provided message.")
 
 			# Include prompt if provided and not None
-			if isinstance(prompt, str):
+			if isinstance(prompt, str)and prompt != None:
 				logging.info("Using provided prompt:")
 				logging.debug(prompt)
 				messages.append({'role': 'user', 'content': prompt})
+			else:
+				logging.warning(f"Invalid prompt type: expected string, received {type(prompt)}")
 
 			logging.info(f"Sending data to {'MemGPT' if use_memgpt else 'OpenAI'}: {messages}")
 
@@ -181,14 +184,14 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 					chunks = [response_text[i:i + 2000] for i in range(0, len(response_text), 2000)]
 					return chunks
 				else:
-					return response_text
+					return [response_text]
 
 	except Exception as e:
 		logging.error("An error occurred during API call in try_generate_response: " + str(e))
 		raise  # Re-raise the exception to propagate it back to the caller
 
 # File path to store user data
-USER_DATA_FILE = "memgpt_user_data.json"
+USER_DATA_FILE = "/app/config/memgpt_user_data.json"
 
 # Dictionary to store Discord ID to MemGPT user data
 # Load from file if it exists
@@ -257,20 +260,19 @@ async def get_or_create_memgpt_agent_and_user(config, user_id, message, discord_
 			# 	"{% endif %}{% endfor %}"  # A basic prompt template
 			# },
 			# "tools": [],  # Add tools if necessary
-			# "system": config["MemGPTPersonality"],  # Customize this
-			# "llm_config": {
-			# 	"model": config["MemGPTmodel"],  # Or your desired model
-			# 	"model_endpoint_type": "local",  # Or your desired endpoint type
-			# 	"model_endpoint": config["MemGPTModelEndpoint"],  # If necessary, specify the endpoint
-			# 	"model_wrapper": "chatml",  # Or your desired wrapper
-			# 	"context_window": 8192  # Or your desired context window
-			# },
-			# "embedding_config": {
-			# 	"embedding_endpoint_type": "local",  # Or your desired endpoint type
-			# 	"embedding_model": "BAAI/bge-small-en-v1.5",  # Or your desired embedding model
-			# 	"embedding_dim": 384,  # Or your desired embedding dimension
-			# 	"embedding_chunk_size": 300,  # Or your desired chunk size
-			# }
+			"system": config["MemGPTPersonality"],  # Customize this
+			"llm_config": {
+				"model": config["MemGPTmodel"],  # Or your desired model
+				"model_endpoint_type": "openai",  # Or your desired endpoint type
+				"model_endpoint": config["MemGPTModelEndpoint"],  # If necessary, specify the endpoint
+				"context_window": 8192  # Or your desired context window
+			},
+			"embedding_config": {
+				"embedding_endpoint_type": "openai",  # Or your desired endpoint type
+				"embedding_model": "text-embedding-ada-002",  # Or your desired embedding model
+				"embedding_dim": 1536,  # Or your desired embedding dimension
+				"embedding_chunk_size": 300,  # Or your desired chunk size
+			}
 		}
 		headers = {
 			'authorization': f'Bearer {user_api_key}' 
@@ -357,12 +359,12 @@ async def send_request_to_memgpt(config, messages, user_id, discord_username):
 									assistant_reply = arguments['message']
 									logging.info(f"Assistant reply: {assistant_reply}")
 									return assistant_reply
-								else:
-									print("No 'message' found in function_call arguments.")
-						else:
-							print("No 'function_call' found in message.")
-				else:
-					print("No messages found in response.")
+				# 				else:
+				# 					print("No 'message' found in function_call arguments.")
+				# 		else:
+				# 			print("No 'function_call' found in message.")
+				# else:
+				# 	print("No messages found in response.")
 			else:
 				error_text = await resp.text()
 				logging.error(f"MemGPT API request failed: {error_text}")
