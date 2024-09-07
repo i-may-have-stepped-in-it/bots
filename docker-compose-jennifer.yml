@@ -42,8 +42,8 @@ services:
         max-file: "3"
         max-size: '10m'
     volumes:
-      - ./config:/app/config/
-      - ./config:/app/memgpt_user_data.json
+      - ./config/config.json:/app/config/config.json
+      - ./config/memgpt_user_data.json:/app/memgpt_user_data.json
       - ./nltk_data:/home/appuser/nltk_data
     tty: true # enable colorized logs
     restart: always
