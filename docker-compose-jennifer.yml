@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 # x-base_service: &base_service
 #   ports:
 #     - "${WEBUI_PORT:-7859}:7860"
@@ -13,6 +14,8 @@
 #           - driver: nvidia
 #             capabilities: [compute, utility]
 
+=======
+>>>>>>> Stashed changes
 name: jennifer
 
 services:
@@ -70,14 +73,23 @@ services:
     ports:
       - 38079:8080
     env_file:
+<<<<<<< Updated upstream
       - ../.env
     network_mode: localai
+=======
+      - ./.env
+    network_mode: host
+>>>>>>> Stashed changes
     volumes:
       - /var/lib/docker/volumes/midoriai_midori-ai-models/_data:/models
       - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/
       - /var/lib/docker/volumes/midoriai_midori-ai-audio/_data:/tmp/generated/audio/
+<<<<<<< Updated upstream
     command: ["./local-ai"]
 
+=======
+    command: [local-ai]
+>>>>>>> Stashed changes
   stable-diffusion-jennifer: &automatic
     # <<: *base_service
     container_name: stable-diffusion-jennifer

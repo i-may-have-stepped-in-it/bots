@@ -14,4 +14,9 @@ function storage.py
 set_python_env.sh
 **/jaunch.json
 Jennifer_message_histories.json
+<<<<<<< Updated upstream
 nltk_data/
+=======
+nltk_data/
+config/memgpt_user_data.json
+>>>>>>> Stashed changes

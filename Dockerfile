@@ -48,4 +48,8 @@ USER appuser
 
 # During debugging, this entry point will be overridden.
 # For more information, please refer to https://aka.ms/vscode-docker-python-debug
+<<<<<<< Updated upstream
 CMD ["bash", "-c", "clear; ./entrypoint.sh"]
+=======
+CMD ["bash", "-c", "clear; ./entrypoint.sh"]
+>>>>>>> Stashed changes

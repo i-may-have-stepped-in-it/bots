@@ -152,8 +152,8 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 				logging.info("Using provided prompt:")
 				logging.debug(prompt)
 				messages.append({'role': 'user', 'content': prompt})
-			else:
-				logging.warning(f"Invalid prompt type: expected string, received {type(prompt)}")
+			# else:
+			# 	logging.warning(f"Invalid prompt type: expected string, received {type(prompt)}")
 
 			logging.info(f"Sending data to {'MemGPT' if use_memgpt else 'OpenAI'}: {messages}")
 
@@ -209,96 +209,78 @@ async def get_or_create_memgpt_agent_and_user(config, user_id, message, discord_
 	if discord_user_id in discord_to_memgpt_user:
 		return discord_to_memgpt_user[discord_user_id]
 
-	headers = {
-		'accept': 'application/json',
-		'authorization': f'Bearer {config["MemGPTBearer"]}',
-		'content-type': 'application/json'
-	}
-	
+	# Common headers function
+	def get_headers(api_key):
+		return {
+			'accept': 'application/json',
+			'authorization': f'Bearer {api_key}',
+			'content-type': 'application/json'
+		}
+
+	# Create MemGPT user
 	async def create_memgpt_user():
 		url = f"{config['MemGPTEndpoint']}/admin/users"
 		async with aiohttp.ClientSession() as session:
-			async with session.post(url, headers=headers, json={}) as resp:
-				logging.info(f"MemGPT User Creation Response Status: {resp.status}")
-				logging.info(f"MemGPT User Creation Response Body: {await resp.text()}")
-				if resp.status == 200:  # Successful user creation
-					response_data = await resp.json() 
-					logging.info(f"MemGPT User Creation Response Body: {response_data}") 
-
-					# Instead of returning a tuple, return a dictionary
+			async with session.post(url, headers=get_headers(config["MemGPTBearer"]), json={}) as resp:
+				logging.debug(f"MemGPT User Creation Response Status: {resp.status}")
+				logging.debug(f"MemGPT User Creation Response Body: {await resp.text()}")
+				if resp.status == 200:
+					response_data = await resp.json()
+					logging.debug(f"MemGPT User Created: {response_data}")
 					return {
 						'user_id': response_data['user_id'], 
 						'api_key': response_data['api_key']
-					} 
+					}
 				else:
 					error_text = await resp.text()
 					logging.error(f"MemGPT user creation failed: {error_text}")
 					raise Exception(f"Failed to create MemGPT user: {error_text}")
 
-	async def create_memgpt_agent(user_api_key,discord_username, config):
-		url = f"{config['MemGPTEndpoint']}/api/agents"
+	# Create MemGPT agent
+	async def create_memgpt_agent(user_api_key, discord_username):
+		base_url = config['MemGPTEndpoint']
+		create_agent_url = f"{base_url}/api/agents"
+		
 		agent_data = {
-			"description": "An agent created for Discord user",  # You can customize this
+			"description": f"An agent created for {discord_username}",
 			"user_id": user_api_key,
 			"config": {
-				"name": f"Agent-{discord_username}",
-				"preset": "memgpt_chat", 
+				"name": f"Agent{discord_username}",
 				"human": discord_username,
-				"persona": "jennifer"
+				"persona": config["MemGPTPersonality"]  # Load personality from config
 			},
-			# "message_ids": [],  # You can add message IDs if needed
-			# "memory": {
-			# 	"memory": {
-			# 		"messages": {
-			# 			"value": [],
-			# 			"limit": 100  # Or another appropriate limit
-			# 		}
-			# 	},
-			# 	"prompt_template": "{% for section, block in memory.items() %}<{{ section }} characters=\"{{ block.value|length }}/{{ block.limit }}\">"
-			# 	"{{ block.value }}"
-			# 	"</{{ section }}>{% if not loop.last %}"
-			# 	"{% endif %}{% endfor %}"  # A basic prompt template
-			# },
-			# "tools": [],  # Add tools if necessary
-			"system": config["MemGPTPersonality"],  # Customize this
 			"llm_config": {
-				"model": config["MemGPTmodel"],  # Or your desired model
-				"model_endpoint_type": "openai",  # Or your desired endpoint type
-				"model_endpoint": config["MemGPTModelEndpoint"],  # If necessary, specify the endpoint
-				"context_window": 8192  # Or your desired context window
-			},
-			"embedding_config": {
-				"embedding_endpoint_type": "openai",  # Or your desired endpoint type
-				"embedding_model": "text-embedding-ada-002",  # Or your desired embedding model
-				"embedding_dim": 1536,  # Or your desired embedding dimension
-				"embedding_chunk_size": 300,  # Or your desired chunk size
+				"model": config["MemGPTmodel"],
+				"model_endpoint_type": "openai",
+				"model_endpoint": config["MemGPTModelEndpoint"],
+				"context_window": 8192
 			}
 		}
-		headers = {
-			'authorization': f'Bearer {user_api_key}' 
-		}
-		logging.info(f"Agent Data being sent: {agent_data}")
+
+		logging.debug(f"Agent creation data: {json.dumps(agent_data, indent=2)}")
+
+		# Step 1: Create the agent
 		async with aiohttp.ClientSession() as session:
-			async with session.post(url, headers=headers, json=agent_data) as resp:
+			async with session.post(create_agent_url, headers=get_headers(user_api_key), json=agent_data) as resp:
 				try:
-					resp.raise_for_status()  # Raise an exception for bad status codes
+					resp.raise_for_status()
 					response_data = await resp.json()
-					logging.info(f"MemGPT Agent Creation Response Data: {response_data}")
-					return response_data['agent_state']['id']
+					agent_id = response_data['agent_state']['id']
+					logging.debug(f"MemGPT Agent Created with ID: {agent_id}")
+					return agent_id
 				except (aiohttp.ClientError, KeyError, json.JSONDecodeError) as e:
 					error_text = await resp.text()
 					logging.error(f"MemGPT agent creation failed: {error_text}, Status: {resp.status}, Exception: {e}")
-					return None  # or raise a more informative exception 
-
-
+					raise Exception(f"Failed to create MemGPT agent: {error_text}")
+			
 	# Create user and agent
 	memgpt_user_data = await create_memgpt_user() 
-	memgpt_agent_id = await create_memgpt_agent(memgpt_user_data['api_key'],discord_username,config)  # Use the API key for the new user
-
+	memgpt_agent_id = await create_memgpt_agent(memgpt_user_data['api_key'], discord_username)
+			
 	# Store user and agent data
 	discord_to_memgpt_user[discord_user_id] = {
 		'user_id': memgpt_user_data['user_id'],
-		'api_key': memgpt_user_data['api_key'],  # Store the correct API key
+		'api_key': memgpt_user_data['api_key'], 
 		'agent_id': memgpt_agent_id
 	}
 	logging.info(f"Storing user data: {memgpt_user_data['user_id']}, {memgpt_agent_id}")
@@ -310,18 +292,18 @@ async def save_user_data():
 	logging.info(f"Saving user data")
 	async with aiofiles.open(USER_DATA_FILE, "w") as f:
 		await f.write(json.dumps(discord_to_memgpt_user, indent=4))
+		logging.info(f"Saved User Config")
 			
-
 async def send_request_to_memgpt(config, messages, user_id, discord_username):
 	memgpt_user_data = await get_or_create_memgpt_agent_and_user(config, user_id, messages, discord_username)
-	logging.info(f"MemGPT User Data: {memgpt_user_data}")
+	logging.debug(f"MemGPT User Data: {memgpt_user_data}")
 
 	# Correctly extract values from the dictionary
 	api_key = memgpt_user_data['api_key']
 	agent_id = memgpt_user_data['agent_id'] 
 	
-	logging.info(f"MemGPT API Key: {api_key}")
-	logging.info(f"Using agent_id: {agent_id}")
+	logging.debug(f"MemGPT API Key: {api_key}")
+	logging.debug(f"Using agent_id: {agent_id}")
 
 	
 	message_content = messages[0]['content']
@@ -334,19 +316,17 @@ async def send_request_to_memgpt(config, messages, user_id, discord_username):
 	data = {
 		"message": message_content,
 		'name': discord_username,
-		'stream': False,
-		"run_async": False,
-		"stream_steps": False,
-		"stream_tokens": False,
+		"run_async": config["MemGPTAsync"],
+		"stream_steps": config["MemGPTStream"],
 		"return_message_object": False
 	}
 	url = f"{config['MemGPTEndpoint']}/api/agents/{agent_id}/messages"
-	logging.info(f"Sending data to MemGPT: {data}")
+	logging.debug(f"Sending data to MemGPT: {data}")
 	async with aiohttp.ClientSession() as session:
 		async with session.post(url, headers=headers, json=data) as resp:
 			if resp.status == 200:
 				response_data = await resp.json()
-				logging.info(f"MemGPT response: {response_data}")
+				logging.debug(f"MemGPT response: {response_data}")
 
 				messages = response_data.get('messages', [])
 				if messages:
@@ -357,14 +337,8 @@ async def send_request_to_memgpt(config, messages, user_id, discord_username):
 								arguments = json.loads(function_call['arguments'])
 								if 'message' in arguments:
 									assistant_reply = arguments['message']
-									logging.info(f"Assistant reply: {assistant_reply}")
+									logging.debug(f"Assistant reply: {assistant_reply}")
 									return assistant_reply
-				# 				else:
-				# 					print("No 'message' found in function_call arguments.")
-				# 		else:
-				# 			print("No 'function_call' found in message.")
-				# else:
-				# 	print("No messages found in response.")
 			else:
 				error_text = await resp.text()
 				logging.error(f"MemGPT API request failed: {error_text}")
