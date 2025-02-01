@@ -19,3 +19,12 @@ sphinx
 pocketsphinx
 pexpect
 aiofiles
+diffusers
+transformers
+accelerate
+discord
+opencv-python
+imageio
+imageio-ffmpeg
+docker
+letta-client

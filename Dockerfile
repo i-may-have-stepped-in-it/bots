@@ -1,5 +1,5 @@
 # For more information, please refer to https://aka.ms/vscode-docker-python
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Keeps Python from generating .pyc files in the container
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -10,28 +10,32 @@ ENV TORCH_HOME=/app/torch
 RUN mkdir -p ${TORCH_HOME}/hub
 RUN chmod -R 777 /app/
 # Install necessary dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update -qy
+RUN apt-get upgrade -qy
+RUN apt-get install -qyy \
+    -o APT::Install-Recommends=false \
+    -o APT::Install-Suggests=false \
+    build-essential \
+    ca-certificates \
+    python3-setuptools \
     vim \
     ffmpeg \
     libffi-dev \
-    python3.11-dev \
     git \
-    build-essential \
     curl \
-    iputils-ping  \
-    && apt-get clean
-    
+    iputils-ping
 # Set the working directory
 WORKDIR /app
 COPY ./requirements.txt /app
-RUN pip3 install --upgrade pip
+COPY --from=ghcr.io/astral-sh/uv:0.5.2 /uv /uvx /bin/
+# RUN pip3 install --upgrade pip
 RUN pip3 install -r requirements.txt
 
 # Copy the application files to the container
 COPY . /app
 RUN bash ./install_voice_recv.sh
 # Clone the discord.py repository and install it
-RUN python -m pip install git+https://github.com/Rapptz/discord.py
+RUN uv pip install git+https://github.com/Rapptz/discord.py --system
 # RUN pip install invokeai[xformers] --use-pep517 --extra-index-url https://download.pytorch.org/whl/cu121
 
 # Creates a non-root user with an explicit UID and adds permission to access the /app folder
@@ -48,8 +52,4 @@ USER appuser
 
 # During debugging, this entry point will be overridden.
 # For more information, please refer to https://aka.ms/vscode-docker-python-debug
-<<<<<<< Updated upstream
 CMD ["bash", "-c", "clear; ./entrypoint.sh"]
-=======
-CMD ["bash", "-c", "clear; ./entrypoint.sh"]
->>>>>>> Stashed changes

@@ -131,7 +131,7 @@ async def generate_openai_response(config, user_id, user_message_histories, mess
 		message_dict = {'role': 'user', 'content': message.content} if message else None  # Create the message dictionary
 		
 		# Generate response using OpenAI API with additional instructions
-		response = await generate_response(config, user_id, user_message_histories, message_dict, prompt=prompt, include_personality=False, upscale=upscale, additional_instructions=additional_instructions, use_memgpt=False)
+		response = await generate_response(config, user_id, message.author.display_name, user_message_histories, message,additional_instructions=additional_instructions, prompt=prompt)
 		logging.info("OpenAI response generated successfully in generate_openai_response.")
 		logging.debug(response)
 		
@@ -352,7 +352,6 @@ def process_response(response):
 	except Exception as e:
 		logging.error("An error occurred while processing API response in process_response: " + str(e))
 		return None
-
 
 # Check if image is generated
 def image_generated(image):
