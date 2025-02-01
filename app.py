@@ -87,7 +87,6 @@ async def join_voice_channel(ctx, voice_channel_id: int):
 		await ctx.channel.send("Unable to join the voice channel. Check my permissions.")
 		raise e
 
-
 # Get the current working directory
 cwd = os.getcwd()
 
@@ -224,6 +223,9 @@ async def handle_messages(config, message, user_message_histories, history_file_
 		if "draw" in message.content.lower() or "send" in message.content.lower():
 			draw_msg = await message.channel.send("Hang on while I get that for you...")
 			image_queue.put_nowait(Draw_Task(config, message, user_message_histories, bot, draw_msg))
+		elif "txt2vid" in message.content.lower():
+			draw_msg = await message.channel.send("Hang on while I get that for you...")
+			await txt2vid(draw_msg,bot_name)
 		elif "check models" in message.content.lower():
 			if message.channel.type == discord.ChannelType.private:
 				await print_available_models(config,message)
@@ -253,8 +255,6 @@ async def handle_messages(config, message, user_message_histories, history_file_
 					await join_voice_channel(message, message.author.voice.channel.id)
 				except Exception as e:
 					logging.error(f"Error occurred while joining voice channel: {e}")
-					# await message.channel.send("I was unable to join voice channel.")
-					# await message.channel.send("Please ensure that I have proper permissions to join voice channels.")
 					return
 				await message.add_reaction("👍")
 				await message.channel.send("Joined voice channel")
@@ -271,7 +271,7 @@ async def handle_messages(config, message, user_message_histories, history_file_
 			else:			
 				await message.channel.send('You need to be in a voice channel to use this command')
 				return		
-		elif message.guild:   # Check for guild and voice channel presence before sending to message_queue
+		elif message.guild:
 			# Check for voice channel presence and bot and user connection
 			voice_channel = None
 			for channel in message.guild.channels:

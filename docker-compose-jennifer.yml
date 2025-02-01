@@ -1,22 +1,8 @@
-<<<<<<< Updated upstream
-# x-base_service: &base_service
-#   ports:
-#     - "${WEBUI_PORT:-7859}:7860"
-#   volumes:
-#     - &v1 ../data:/data
-#     - &v2 ../output:/output
-#   stop_signal: SIGKILL
-#   tty: true
-#   deploy:
-#     resources:
-#       reservations:
-#         devices:
-#           - driver: nvidia
-#             capabilities: [compute, utility]
-
-=======
->>>>>>> Stashed changes
 name: jennifer
+
+networks:
+  jennifer:
+    driver: bridge
 
 services:
   init:
@@ -24,12 +10,14 @@ services:
     volumes:
       - ./config:/app/config  # Mount the ./config directory on the host to /app/config in the container
     command: chown -R 1000:1000 /app/config
-    profiles: [""]
+    profiles: ["",nvidia,intel]
     deploy:
       mode: "replicated"
       replicas: 1
       restart_policy:
         condition: none
+    networks:
+      - jennifer
 
   jennifer:
     user: "1000:1000"
@@ -38,7 +26,7 @@ services:
     build:
       context: .
       # no_cache: true
-    profiles: [""]
+    profiles: ["",nvidia,intel]
     logging:
       driver: json-file
       options:
@@ -47,6 +35,8 @@ services:
     volumes:
       - ./config/:/app/config/
       - ./nltk_data:/home/appuser/nltk_data
+    networks:
+      - jennifer
     tty: true # enable colorized logs
     restart: always
     deploy:
@@ -57,7 +47,7 @@ services:
               count: all
               capabilities: [gpu]
 
-  jennifer-text-backend:
+  jennifer-text-backend-nvidia:
     deploy:
       resources:
         reservations:
@@ -67,29 +57,42 @@ services:
               capabilities: [gpu]
     image: lunamidori5/midori_ai_subsystem_localai_nvidia_gpu:master
     pull_policy: always # always pull the latest
-    profiles: [""]
+    profiles: [nvidia,""]
     tty: true # enable colorized logs
     restart: always # should this be on-failure ?
     ports:
-      - 38079:8080
+      - 38078:38078
     env_file:
-<<<<<<< Updated upstream
-      - ../.env
-    network_mode: localai
-=======
       - ./.env
-    network_mode: host
->>>>>>> Stashed changes
+    networks:
+      - jennifer
     volumes:
-      - /var/lib/docker/volumes/midoriai_midori-ai-models/_data:/models
-      - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/
-      - /var/lib/docker/volumes/midoriai_midori-ai-audio/_data:/tmp/generated/audio/
-<<<<<<< Updated upstream
-    command: ["./local-ai"]
-
-=======
+      - /var/lib/docker/volumes/midoriai_midori-ai-models/_data:/models:rshared
+      - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/:rshared
+      - /var/lib/docker/volumes/midoriai_midori-ai-audio/_data:/tmp/generated/audio/:rshared
+      - ./.env:/build/.env
     command: [local-ai]
->>>>>>> Stashed changes
+
+  jennifer-text-backend-intel:
+    deploy:
+    devices:
+      - /dev/dri:/dev/dri
+    image: lunamidori5/midori_ai_subsystem_localai_intelf16_gpu:master
+    tty: true # enable colorized logs
+    restart: always # should this be on-failure ?
+    profiles: ["intel",""]
+    ports:
+      - 38078:38078
+    networks:
+      - jennifer
+    env_file:
+      - intel.env
+    volumes:
+      - /var/lib/docker/volumes/midoriai_midori-ai-models/_data:/models:rshared
+      - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/:rshared
+      - /var/lib/docker/volumes/midoriai_midori-ai-audio/_data:/tmp/generated/audio/:rshared
+      - ./intel.env:/build/.env
+    command: ["local-ai"]
   stable-diffusion-jennifer: &automatic
     # <<: *base_service
     container_name: stable-diffusion-jennifer
@@ -105,7 +108,9 @@ services:
       - &v1 ../data:/data
       - &v2 ../output:/output
     stop_signal: SIGKILL
-    profiles: [""]
+    networks:
+      - jennifer
+    profiles: ["",intel,nvidia]
     deploy:
       resources:
         reservations:
@@ -115,5 +120,7 @@ services:
   download:
     build: ../services/download/
     profiles: ["download",""]
+    networks:
+      - jennifer
     volumes:
       - *v1

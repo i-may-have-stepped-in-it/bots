@@ -42,7 +42,7 @@ async def handle_message_processing(config, message, user_message_histories, his
 
 		# Pass include_personality=True when calling generate_response
 		async with channel.typing():
-			openairesponse = await generate_response(config, message.author.id, message.author.display_name, user_message_histories, message, include_personality=True)
+			openairesponse = await generate_response(config, message.author.id, message.author.display_name, user_message_histories, message)
 		
 		# Ensure response is a string
 		if isinstance(openairesponse, list):
