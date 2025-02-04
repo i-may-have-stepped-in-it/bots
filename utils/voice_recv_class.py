@@ -183,7 +183,7 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 			sentences = nltk.sent_tokenize(text)
 
 			# Initialize variables 
-			max_chunk_length = 1000
+			max_chunk_length = 950
 			chunks = []
 			current_chunk = ''
 

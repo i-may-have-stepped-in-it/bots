@@ -53,7 +53,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: all
               capabilities: [gpu]
     image: lunamidori5/midori_ai_subsystem_localai_nvidia_gpu:master
     pull_policy: always # always pull the latest
@@ -83,6 +83,7 @@ services:
     profiles: ["intel",""]
     ports:
       - 38078:38078
+    privileged: true
     networks:
       - jennifer
     env_file:
@@ -92,7 +93,7 @@ services:
       - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/:rshared
       - /var/lib/docker/volumes/midoriai_midori-ai-audio/_data:/tmp/generated/audio/:rshared
       - ./intel.env:/build/.env
-    command: ["local-ai"]
+    command: [ "local-ai" ]
   stable-diffusion-jennifer: &automatic
     # <<: *base_service
     container_name: stable-diffusion-jennifer
