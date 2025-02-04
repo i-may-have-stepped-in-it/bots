@@ -131,6 +131,8 @@ async def generate_response(config, user_id, discord_username, user_message_hist
 		if message:
 			await message.channel.send("I can't talk right now please try back later.")
 	raise  # Re-raise the exception if both MemGPT and OpenAI fail
+
+
 async def try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid, use_memgpt):
 	try:
 			# Determine recent message content
@@ -231,11 +233,11 @@ async def get_or_create_memgpt_agent(config, user_id, discord_username, message)
 				"memory_blocks": # Updated memory structure
 				[
 					{
-					 "label": "human", 
+					 "label": "human",
 					 "value": f"The human's name is {discord_username}"
 					},
 
-					{"label": "persona", 
+					{"label": "persona",
 					"value": config["MemGPTPersonality"]
 					}
 				],
@@ -251,7 +253,7 @@ async def get_or_create_memgpt_agent(config, user_id, discord_username, message)
 				"embedding_endpoint_type": config.get("MemGPTEmbeddingEndpointType", "openai"),
 				"embedding_endpoint": config.get("MemGPTEmbeddingEndpoint")
 			}
-			
+
 		}
 
 		logging.debug(f"Agent creation data: {json.dumps(agent_data, indent=2)}")
@@ -280,46 +282,65 @@ async def save_user_data():
 		logging.info(f"Saved User Config")
 
 async def send_request_to_memgpt(config, messages, user_id, discord_username, message):
-	memgpt_agent_data = await get_or_create_memgpt_agent(config, user_id, discord_username, message) # Changed to get agent data
-	agent_id = memgpt_agent_data['agent_id']
-	headers = {
-	   'Content-Type': 'application/json',
-		'Authorization': f'Bearer {config["MemGPTBearer"]}' # Changed to use config api key
-	}
+    memgpt_agent_data = await get_or_create_memgpt_agent(config, user_id, discord_username, message)
+    agent_id = memgpt_agent_data['agent_id']
+    client = AsyncLetta(base_url=config["MemGPTEndpoint"], timeout=300)
+    message_content = messages[0]['content']
 
+    try:
+        response = await client.agents.messages.create(
+            agent_id=agent_id,
+            messages=[MessageCreate(role="user", content=message_content)],
+            use_assistant_message=False
+        )
 
-	message_content = messages[0]['content']
+        logging.info(f"MemGPT raw response: {response}")
 
-	# Construct the data payload according to the new MemGPT API
-	data = {
-		"messages": [{"role": "user", "content": message_content}],
-		
-	}
+        if response and hasattr(response, 'messages') and isinstance(response.messages, list):
+            return_message = ""
+            for msg in response.messages:
+                if hasattr(msg, 'reasoning') and msg.reasoning:
+                    logging.info(f"Agent reasoning: {msg.reasoning}")
 
-	url = f"{config['MemGPTEndpoint']}/v1/agents/{agent_id}/messages"  # Updated URL
-	logging.info(f"Sending data to MemGPT: {data}")
-	async with aiohttp.ClientSession() as session:
-		async with session.post(url, headers=headers, json=data) as resp:
-			if resp.status == 200:
-				response_data = await resp.json()
-				logging.info(f"MemGPT response: {response_data}")
+                if hasattr(msg, 'message_type') and msg.message_type == 'assistant_message':
+                    if hasattr(msg, "function_call") and msg.function_call:
+                        try:
+                            arguments = json.loads(msg.function_call.arguments or '{}')
 
-				messages = response_data.get('messages', [])
-				if messages:
-					for message in messages:
-						if 'function_call' in message and message.get('message_type') == 'tool_call':
-							function_call = message['function_call']
-							if 'arguments' in function_call:
-								arguments = json.loads(function_call['arguments']) # Parse arguments
-								if 'message' in arguments: # check if key exists
-									return arguments['message']
+                            # Check if a function call name is present and is send_message
+                            if msg.function_call.name == "send_message":
+                                return_message = arguments.get('message', '')
+                                break
+                            else:
+                                logging.info(f"Function Call with name {msg.function_call.name} was not send_message.")
+                        except json.JSONDecodeError:
+                            logging.error("Failed to decode tool call arguments from MemGPT")
+                            # return_message = "I'm having trouble processing the tool call response."
+                            break
+                    elif hasattr(msg, 'content') and msg.content:
+                        return_message = msg.content
+                        break
+                    else:
+                        logging.info("Message type is assistant_message, but no content or function call was found.")
 
-
-			else:
-				error_text = await resp.text()
-				logging.error(f"MemGPT API request failed: {error_text}, Status: {resp.status}")
-				raise Exception(f"MemGPT API request failed: {error_text}")
-
+                elif hasattr(msg, "tool_call") and msg.tool_call:
+                    try:
+                        arguments = json.loads(msg.tool_call.arguments)
+                        return_message = arguments.get('message', '')
+                        break
+                    except json.JSONDecodeError:
+                        logging.error("Failed to decode tool call arguments from MemGPT")
+                        # return_message = "I'm having trouble processing the tool call response."
+                        break
+                elif hasattr(msg, "status") and msg.status:
+                    logging.info(f"Tool response information: {msg.status}")
+            return return_message
+        else:
+            logging.error(f"Unexpected response format from MemGPT: {response}")
+    except Exception as e:  # Catch any Letta client exceptions
+        logging.error(f"MemGPT API request failed: {e}")
+        raise Exception(f"MemGPT API request failed: {e}")
+	
 async def load_model(config, message):
 	"""Loads a Stable Diffusion model and updates the config file with the new model name."""
 	async with message.channel.typing():
@@ -381,3 +402,4 @@ async def txt2vid(message,bot_name):
 			image_url = response_data["candidates"][0]["url"]
 			logging.info(f"Generated image URL: {image_url}")
 			await message.channel.send(image_url)
+
