@@ -101,36 +101,37 @@ def log_setup(config):
 	)
 
 async def generate_response(config, user_id, discord_username, user_message_histories, message=None, additional_instructions=None, prompt=None):
-	try:
-		client=None
-		response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=False, use_memgpt=True)
-		if response: # Successful response from MemGPT
-			return response
-	except Exception as e:
-		logging.error(f"An error occurred during MemGPT API call: {str(e)}")
+    try:
+        client = None
+        response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=False, use_memgpt=True)
+        if response:  # Successful response from MemGPT
+            return response
+    except Exception as e:
+        logging.error(f"An error occurred during MemGPT API call: {str(e)}")
 
-	# If MemGPT fails, try OpenAI as the secondary client
-	try:
-		openai_valid=True
-		if config["OpenAPIEndpoint"] and config["OpenAPIKey"]:
-			client = AsyncOpenAI(base_url=config["OpenAPIEndpoint"], api_key=config["OpenAPIKey"])
-			response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid, use_memgpt=False)
-			if response:
-				return response
-	except Exception as e:
-		logging.error(f"An error occurred during OpenAI API call: {str(e)}")
-		try:
-			openai_valid=False
-			if config["SecondaryOpenAPIEndpoint"] and config["SecondaryOpenAPIKey"]:
-				client = AsyncOpenAI(base_url=config["SecondaryOpenAPIEndpoint"], api_key=config["SecondaryOpenAPIKey"])
-				response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid, use_memgpt=False)
-				if response:
-					return response
-		except Exception as e:
-			logging.error(f"An error occurred during second OpenAI API call: {str(e)}")
-		if message:
-			await message.channel.send("I can't talk right now please try back later.")
-	raise  # Re-raise the exception if both MemGPT and OpenAI fail
+    # Check if primary OpenAI endpoint is disabled
+    if config.get("OpenAPIEndpoint") and config["OpenAPIEndpoint"].lower() != "disabled" and config.get("OpenAPIKey"):
+        try:
+            client = AsyncOpenAI(base_url=config["OpenAPIEndpoint"], api_key=config["OpenAPIKey"])
+            response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=True, use_memgpt=False)
+            if response:
+                return response
+        except Exception as e:
+            logging.error(f"An error occurred during OpenAI API call: {str(e)}")
+
+    # Try secondary OpenAI endpoint if primary is disabled or fails
+    if config.get("SecondaryOpenAPIEndpoint") and config["SecondaryOpenAPIEndpoint"].lower != "disabled" and config.get("SecondaryOpenAPIKey"):
+        try:
+            client = AsyncOpenAI(base_url=config["SecondaryOpenAPIEndpoint"], api_key=config["SecondaryOpenAPIKey"])
+            response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=False, use_memgpt=False)
+            if response:
+                return response
+        except Exception as e:
+            logging.error(f"An error occurred during second OpenAI API call: {str(e)}")
+    
+    if message:
+        await message.channel.send("I can't talk right now please try back later.")
+    raise  # Re-raise the exception if all options fail
 
 
 async def try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid, use_memgpt):
@@ -167,20 +168,24 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 
 			logging.info(f"Sending data to {'MemGPT' if use_memgpt else 'OpenAI'}: {messages}")
 
-			# Send request to OpenAI or MemGPT based on use_memgpt flag
 			if use_memgpt:
 				response = await send_request_to_memgpt(config, messages, user_id, discord_username, message)
 				if response:
 					logging.info(f"MemGPT Response: {response}")
-					# Chunk if needed
+					# Ensure response is a string
+					if isinstance(response, list):  # Check if response is a list
+						response = "".join(response)  # Join list elements into a string
+
+
 					if len(response) > 2000:
 						chunks = [response[i:i + 2000] for i in range(0, len(response), 2000)]
 						return chunks
 					else:
-						return response
+						return [response] # Return a list even if there's only one chunk for consistent handling
 				else:
 					logging.warning("MemGPT did not return a response.")
-					# Handle cases where MemGPT didn't return a response
+					return None # Return None to indicate no response
+
 			else:
 				if openai_valid:
 					response = await client.chat.completions.create(
@@ -227,7 +232,7 @@ async def get_or_create_memgpt_agent(config, user_id, discord_username, message)
 	client = AsyncLetta(base_url=config["MemGPTEndpoint"])  # Letta Client
 
 	async def create_memgpt_agent(discord_username, message):
-		await message.channel.send("Creating a personalized agent for you. Please wait a moment.")
+		# await message.channel.send("Creating a personalized agent for you. Please wait a moment.")
 
 		agent_data = {
 				"memory_blocks": # Updated memory structure

@@ -23,7 +23,8 @@ RUN apt-get install -qyy \
     libffi-dev \
     git \
     curl \
-    iputils-ping
+    iputils-ping\
+    libsodium-dev 
 # Set the working directory
 WORKDIR /app
 COPY ./requirements.txt /app

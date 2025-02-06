@@ -3,7 +3,8 @@ import asyncio
 import torch
 import torchaudio
 import nltk
-nltk.download('all')
+nltk.download('punkt')
+nltk.download('punkt_tab')
 from nltk.tokenize import sent_tokenize
 import discord
 from discord.ext import voice_recv
@@ -16,21 +17,28 @@ from discord.ext.voice_recv.extras import *
 import sys
 sys.path.insert(0, './utils/')  # Add this path to system paths for Python to be able to find modules in it.
 from utils import *
-from utils.utility_functions import config
+from utils.utility_functions import config, generate_response
+import concurrent.futures
 
 class VoiceRecvClient(voice_recv.VoiceRecvClient):
 	# Initialize the TTS model as a class attribute
 	from silero.tts_utils import apply_tts
 	language = 'en'
 	model_id = 'v3_en'
-	device = torch.device ("cpu")   #("cuda" if torch.cuda.is_available() else "cpu")
-	silero_model, _ = torch.hub.load(repo_or_dir='snakers4/silero-models',
-							  model='silero_tts',
-							  language=language,
-							  speaker=model_id
-							  )
-	silero_model.to(device)
+	device = torch.device ("cuda" if torch.cuda.is_available() else "cpu")
+	try:
+		silero_model, _ = torch.hub.load(repo_or_dir='snakers4/silero-models',
+								model='silero_tts',
+								language=language,
+								speaker=model_id
+								)
+		silero_model.to(device)
+	except Exception as e:
+		print(f"Error loading Silero model: {e}")
+		silero_model = None
+
 	tts_queue = asyncio.Queue()
+	
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
 
@@ -53,11 +61,11 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 		try:
 			global config
 			user = None
-			response_chunks = await cls.generate_response_text(text)
+			response_chunks = await generate_response(config, message.author.id, str(message.author.display_name), {}, message=None, prompt=text)
 			if response_chunks:
 				concatenated_response = ''
 				for chunk in response_chunks:
-					cls.text_to_speech(chunk)
+					await cls.text_to_speech(chunk)
 					audio_bytes_list = await cls.tts_queue.get()
 					logging.info(f"Response audio: {type(audio_bytes_list)} ")
 					if audio_bytes_list:
@@ -67,13 +75,17 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 							if voice_client:
 								for audio_bytes in audio_bytes_list:
 									audio_source = discord.FFmpegPCMAudio(io.BytesIO(audio_bytes), pipe=True)
-									voice_client.play(audio_source, after=lambda e: print('done', e))
-									logging.info("Playing response in voice channel...")
-									
-									# Wait until the audio is finished playing
-									while voice_client.is_playing():
-										await asyncio.sleep(0.1)  # You can adjust the sleep duration if needed
-									
+									# Correct way to handle after callback:
+									playback_finished = asyncio.Future()
+
+									def set_playback_finished(error): # No self here!
+										if error:
+											print(f"Playback error: {error}")
+										playback_finished.set_result(None)  # Resolve the future
+
+									voice_client.play(audio_source, after=set_playback_finished)
+									await playback_finished
+
 									concatenated_response += chunk  # Concatenate the chunk to the response
 									
 									# Split concatenated response into chunks of at most 2000 characters, respecting sentence end and newlines
@@ -88,7 +100,7 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 									
 									# Send the chunks as separate messages
 									# for chunk in chunks:
-									# 	await message.channel.send(chunk)
+										await message.channel.send(chunk)
 										
 					else:
 						logging.error("No response text generated.")
@@ -96,116 +108,52 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 		except Exception as e:
 			await message.channel.send("Sorry, I'm having trouble processing your request.")
 			logging.error(e)
-		finally:
-			cls.tts_queue.task_done()
-
-	@staticmethod
-	async def generate_response_text(text: str)  ->   str | None:
-		try:
-			api_key = config["OpenAPIKey"]
-			endpoint = config["OpenAPIEndpoint"]
-			model = config["OpenaiModel"]
-			messages = []
-			personality_command = f"You are {config['Personality']} ." 
-			messages.append({'role': 'system', 'content': personality_command})
-			messages.append({'role': 'user', 'content': text}) 
-
-			client = AsyncOpenAI(base_url=endpoint, api_key=api_key)
-			response = await client.chat.completions.create(
-				messages=messages,
-				model=model
-			)
-
-			logging.info("API response received.")
-			logging.debug(response)
-
-			# Extract response text from the API response
-			response_text = response.choices[0].message.content 
-
-			# Split response text into chunks respecting sentence endings and newlines
-			chunks = []
-			start = 0
-			for sentence in re.findall(r'[^.?!\ n]+[.?!\n]+', response_text):
-				if len(sentence) + start > 1000:
-					chunks.append(response_text[start:start+1000])
-					start += 1000
-			if start < len(response_text):
-				chunks.append(response_text[start:])
-
-			return chunks
-
-		except Exception as e:
-			logging.error(f"Error in generate_response_text: {e}")
-
-			try:
-				# If primary client fails, try with secondary client
-				if config["SecondaryOpenAPIEndpoint"] and config["SecondaryOpenAPIKey"]:
-					client = AsyncOpenAI(base_url=config["SecondaryOpenAPIEndpoint"], api_key=config["SecondaryOpenAPIKey"])
-					response = await client.chat.completions.create(
-						messages=messages,
-						model=model
-					)
-
-					logging.info("API response received from secondary client.")
-					logging.debug(response)
-
-					# Extract response text from the API response
-					response_text = response.choices[0].message.content 
-
-					# Split response text into chunks respecting sentence endings and newlines
-					chunks = []
-					start = 0
-					for sentence in re.findall(r'[^.?!\ n]+[.?!\n]+', response_text):
-						if len(sentence) + start > 990:
-							chunks.append(response_text[start:start+990])
-							start += 990
-					if start < len(response_text):
-						chunks.append(response_text[start:])
-
-					return chunks
-
-			except Exception as e:
-				logging.error(f"An error occurred during second OpenAI API call: {str(e)}")
-				return None
 
 	@classmethod
-	def text_to_speech(cls, text):
+	async def text_to_speech(cls, text):
+		if not text:
+			logging.warning("Received empty or None text for TTS.")
+			return None
+
+		try:
+			loop = asyncio.get_running_loop()  # Get the current event loop
+			with concurrent.futures.ThreadPoolExecutor() as pool:
+				audio_bytes_list = await loop.run_in_executor(
+					pool,  # Use the thread pool
+					cls._text_to_speech_blocking,  # Call the blocking function
+					text, config.get('SileroSpeaker') # Pass arguments
+				)
+
+			cls.tts_queue.put_nowait(audio_bytes_list)
+			logging.info("TTS Conversion Completed")
+		except ValueError as ve:
+			logging.error(f"ValueError in text_to_speech: {ve}")
+		except Exception as e:
+			logging.error(f"Error in text_to_speech: {e}")
+			# Optionally, raise the exception to propagate it further
+			raise
+		return None
+	
+	@classmethod
+	def _text_to_speech_blocking(cls, text, speaker):  # New blocking function
+		# This function now runs in a separate thread		
 		try:
 			sample_rate = 48000
-			speaker = config.get('SileroSpeaker')  # Using get to handle missing key
+			speaker = config.get('SileroSpeaker')
 			if not speaker:
 				raise ValueError("SileroSpeaker configuration not found")
 
 			put_accent = True
 			put_yo = True
 
-			# Split text into sentences
-			sentences = nltk.sent_tokenize(text)
-
-			# Initialize variables 
-			max_chunk_length = 950
-			chunks = []
-			current_chunk = ''
-
-			# Iterate over each sentence
-			for sentence in sentences:
-				# Check if length is greater than 1000
-				if len(sentence) <= max_chunk_length:
-					current_chunk += sentence + ' '
-				else:
-					# If adding the current word would exceed the maximum length, split the chunk at the last space
-					last_space_index = current_chunk.rfind(' ')
-					chunks.append(current_chunk[:last_space_index].strip())
-					current_chunk = sentence + ' '
-
-			# Append the last chunk
-			if current_chunk:
-				chunks.append(current_chunk.strip())
-
+			chunks = textwrap.wrap(text, width=950, break_long_words=False)
+			
 
 			# Convert each chunk to speech
 			audio_bytes_list = []
 			for chunk in chunks:
+				# logging.info(f"Chunks to be synthesized: {chunks}")
+
 				audio = cls.silero_model.apply_tts(text=chunk, speaker=speaker, sample_rate=sample_rate,
 													put_accent=put_accent, put_yo=put_yo)
 
@@ -220,7 +168,7 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 				audio_bytes_list.append(audio_bytes)
 			
 			# Return the list of audio bytes
-			cls.tts_queue.put_nowait(audio_bytes_list)
+			return audio_bytes_list # return the generated audio
 			logging.info("TTS Conversion Completed")
 		except ValueError as ve:
 			logging.error(f"ValueError in text_to_speech: {ve}")
