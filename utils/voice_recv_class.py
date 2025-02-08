@@ -15,13 +15,13 @@ import re
 from silero import *
 from discord.ext.voice_recv.extras import *
 import sys
-sys.path.insert(0, './utils/')  # Add this path to system paths for Python to be able to find modules in it.
+sys.path.insert(0, './utils/')
 from utils import *
-from utils.utility_functions import config, generate_response
+from utils.utility_functions import generate_response
 import concurrent.futures
+from app import config
 
 class VoiceRecvClient(voice_recv.VoiceRecvClient):
-	# Initialize the TTS model as a class attribute
 	from silero.tts_utils import apply_tts
 	language = 'en'
 	model_id = 'v3_en'
@@ -41,8 +41,6 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 	
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
-
-		# Capture the current event loop at initialization for use in callbacks
 		self.loop = asyncio.get_event_loop()
 		
 	def handle_audio_processing(self, ctx):
@@ -50,24 +48,20 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 			bot_name = config["Name"].lower()
 			logging.info(f"Speech recognized : {text}")
 			if bot_name in text.lower():
-				# Use the captured loop to ensure the correct event loop is used
 				asyncio.run_coroutine_threadsafe(self.process_recognized_speech(text, ctx), self.loop)
 
 		sink = SpeechRecognitionSink(default_recognizer=config["recognizer"], text_cb=on_speech_recognized)
 		self.listen(sink)	
 
 	@classmethod
-	async def process_recognized_speech(cls, text:  str, message):
+	async def process_recognized_speech(cls, text: str, message):
 		try:
-			global config
-			user = None
-			response_chunks = await generate_response(config, message.author.id, str(message.author.display_name), {}, message=None, prompt=text)
+			response_chunks = await generate_response(config, message.author.id, message.author.display_name, {}, message=None, prompt=text)
 			if response_chunks:
 				concatenated_response = ''
 				for chunk in response_chunks:
 					await cls.text_to_speech(chunk)
 					audio_bytes_list = await cls.tts_queue.get()
-					logging.info(f"Response audio: {type(audio_bytes_list)} ")
 					if audio_bytes_list:
 						member = message.author
 						if member.voice:
@@ -75,33 +69,29 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 							if voice_client:
 								for audio_bytes in audio_bytes_list:
 									audio_source = discord.FFmpegPCMAudio(io.BytesIO(audio_bytes), pipe=True)
-									# Correct way to handle after callback:
 									playback_finished = asyncio.Future()
 
-									def set_playback_finished(error): # No self here!
+									def set_playback_finished(error):
 										if error:
 											print(f"Playback error: {error}")
-										playback_finished.set_result(None)  # Resolve the future
+										playback_finished.set_result(None)
 
 									voice_client.play(audio_source, after=set_playback_finished)
 									await playback_finished
 
-									concatenated_response += chunk  # Concatenate the chunk to the response
-									
-									# Split concatenated response into chunks of at most 2000 characters, respecting sentence end and newlines
-									max_length = 1900
-									chunks = []
-									lines = concatenated_response.split('\n')
-									for line in lines:
-										# Wrap the line into chunks of approximately 1900 characters
-										wrapped_lines = textwrap.wrap(line, width=max_length, break_long_words=False)
-										for wrapped_line in wrapped_lines:
-											chunks.append(wrapped_line.strip())
-									
-									# Send the chunks as separate messages
-									# for chunk in chunks:
+								concatenated_response += chunk
+								
+				if concatenated_response:
+					max_length = 1900
+					chunks = []
+					lines = concatenated_response.split('\n')
+					for line in lines:
+						wrapped_lines = textwrap.wrap(line, width=max_length, break_long_words=False)
+						for wrapped_line in wrapped_lines:
+							chunks.append(wrapped_line.strip())
+					
+					for chunk in chunks:
 										await message.channel.send(chunk)
-										
 					else:
 						logging.error("No response text generated.")
 
@@ -116,12 +106,12 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 			return None
 
 		try:
-			loop = asyncio.get_running_loop()  # Get the current event loop
+			loop = asyncio.get_running_loop()
 			with concurrent.futures.ThreadPoolExecutor() as pool:
 				audio_bytes_list = await loop.run_in_executor(
-					pool,  # Use the thread pool
-					cls._text_to_speech_blocking,  # Call the blocking function
-					text, config.get('SileroSpeaker') # Pass arguments
+					pool,
+					cls._text_to_speech_blocking,
+					text, config.get('SileroSpeaker')
 				)
 
 			cls.tts_queue.put_nowait(audio_bytes_list)
@@ -130,13 +120,11 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 			logging.error(f"ValueError in text_to_speech: {ve}")
 		except Exception as e:
 			logging.error(f"Error in text_to_speech: {e}")
-			# Optionally, raise the exception to propagate it further
 			raise
 		return None
 	
 	@classmethod
-	def _text_to_speech_blocking(cls, text, speaker):  # New blocking function
-		# This function now runs in a separate thread		
+	def _text_to_speech_blocking(cls, text, speaker):
 		try:
 			sample_rate = 48000
 			speaker = config.get('SileroSpeaker')
@@ -148,32 +136,24 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 
 			chunks = textwrap.wrap(text, width=950, break_long_words=False)
 			
-
-			# Convert each chunk to speech
 			audio_bytes_list = []
 			for chunk in chunks:
-				# logging.info(f"Chunks to be synthesized: {chunks}")
-
 				audio = cls.silero_model.apply_tts(text=chunk, speaker=speaker, sample_rate=sample_rate,
 													put_accent=put_accent, put_yo=put_yo)
 
-				# Assuming audio is a list of tensors, handling single text input
 				audio_tensor = audio.unsqueeze(0)
 
-				# Convert the generated audio tensor to bytes
 				audio_bytes_io = io.BytesIO()
 				torchaudio.save(audio_bytes_io, src=audio_tensor, sample_rate=sample_rate, format="wav")
 				audio_bytes = audio_bytes_io.getvalue()
 
 				audio_bytes_list.append(audio_bytes)
 			
-			# Return the list of audio bytes
-			return audio_bytes_list # return the generated audio
+			return audio_bytes_list
 			logging.info("TTS Conversion Completed")
 		except ValueError as ve:
 			logging.error(f"ValueError in text_to_speech: {ve}")
 		except Exception as e:
 			logging.error(f"Error in text_to_speech: {e}")
-			# Optionally, raise the exception to propagate it further
 			raise
 		return None

@@ -78,7 +78,7 @@ def parse_prompt(prompt, bot_name, config):
 		logging.debug(prompt)
 		
 		# Remove "send" and/or "draw" from the prompt
-		prompt = prompt.replace("send", "").replace("draw", "").strip()
+		# prompt = prompt.replace("send", "").replace("draw", "").strip()
 
 		# Check if "--upscale" is present
 		upscale = "--upscale" in prompt
