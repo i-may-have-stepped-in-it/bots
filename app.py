@@ -20,53 +20,46 @@ from utils.utility_functions import *
 from utils.image_gen import handle_image_generation
 from utils.image_gen import print_available_models
 from utils.interactions import handle_message_processing
+from watchdog.observers.polling import PollingObserver
+from utils.config_gen import load_config, config_path, log_setup, handle_config_change, ConfigFileHandler
 
-sys.path.insert(0, './utils/')  # Add this path to system paths for Python to be able to find modules in it.
+
+
+sys.path.insert(0, './utils/')
 tracemalloc.start()
 
-# Load existing message histories from file
-def load_message_histories(history_file_name):
-	try:
-		if os.path.exists(history_file_name):
-			with open(history_file_name, 'r') as file:
-				message_histories = json.load(file)
-				return message_histories if message_histories is not None else {}
-		else:
-			logging.info("Message history file not found in load_message_histories. Creating a new one.")
-			with open(history_file_name, 'w') as file:
-				json.dump({}, file)  # Create a new empty message history file
-			return {}
-	except Exception as e:
-		logging.error("An error occurred while loading message histories in load_message_histories: " + str(e))
-		return {}
-
-# define a Task named tuple to hold the configuration, message, bucket, user_message_histories and bot objects.
 Task = namedtuple('Task','config, message, user_message_histories, bot, history_file_name')
 Draw_Task = namedtuple('Draw_Task','config, message, user_message_histories, bot, draw_msg')
 
+config = load_config(config_path)
+if config is None:
+	sys.exit(1)
+
+observer = None
+
+image_queue = asyncio.Queue()
+message_queue = asyncio.Queue()
+
 async def worker(image_queue):
-	while True:  # an infinite loop that runs until the program is stopped
+	while True:
 		config, message, user_message_histories, bot, draw_msg = await image_queue.get()
 		try:
 			await handle_image_generation(config, message, user_message_histories, bot, draw_msg)
 		except Exception as e:
 			logging.error("An error occurred in image generation queue: " + str(e))
 		finally:
-			image_queue.task_done()  # mark the task as done once it's finished no matter if there was an exception or not
+			image_queue.task_done()
 
 async def worker2(message_queue):
 	while True:
 		config, message, user_message_histories, history_file_name, bot = await message_queue.get()
 		try:
-			await handle_message_processing(config, message, user_message_histories, bot, history_file_name)
+			await handle_message_processing(config, message, user_message_histories, history_file_name)
 		except Exception as e:
 			logging.error("An error occurred in message processing queue: " + str(e))
 		finally:
 			message_queue.task_done()
 
-# initialize the queues
-image_queue = asyncio.Queue()
-message_queue = asyncio.Queue()
 
 async def join_voice_channel(ctx, voice_channel_id: int):
 	try:
@@ -87,39 +80,38 @@ async def join_voice_channel(ctx, voice_channel_id: int):
 		await ctx.channel.send("Unable to join the voice channel. Check my permissions.")
 		raise e
 
-# Get the current working directory
-cwd = os.getcwd()
-
-# Define the filename
-filename = "config.json"
-
-# Construct the full path to the config file
-config_path = os.path.join(cwd, "config", filename)
-
-# Now you can pass config_path to your load_config function
-config = load_config(config_path)
-
 async def check_and_leave_voice_channel (guild):
 	voice_client = guild.voice_client
 	if voice_client and voice_client.is_connected():
 		if len(voice_client.channel.members) == 1:
-			await voice_client.disconnect()
+					await voice_client.disconnect()
 
-# Define a function to start the sharded bot tasks
-import logging
 
 async def start_bot():
+	global observer
 	try:
-		# Set up logging
-		config = load_config(config_path)
 		log_setup(config)
-		# logging.info(f"Config file successfully loaded with content: {config}")
 		history_file_name = config["Name"] + "_message_histories.json"
+
+		def load_message_histories(history_file_name):
+			try:
+				if os.path.exists(history_file_name):
+					with open(history_file_name, 'r') as file:
+						message_histories = json.load(file)
+						return message_histories if message_histories is not None else {}
+				else:			
+					logging.info("Message history file not found. Creating a new one.")
+					with open(history_file_name, 'w') as file:
+						json.dump({}, file)
+					return {}
+			except Exception as e:
+				logging.error("An error occurred while loading message histories: " + str(e))
+				return {}
 		user_message_histories = load_message_histories(history_file_name)
+
 		intents = discord.Intents.all()
 		bot = discord.AutoShardedClient(intents=intents)
-				
-		# Start worker tasks
+		
 		asyncio.create_task(worker(image_queue))
 		asyncio.create_task(worker2(message_queue))
 		
@@ -130,11 +122,8 @@ async def start_bot():
 		@bot.event
 		async def on_message(message):
 			try:
-				# Ignore messages from all bot users
 				if message.author.bot:
-					# logging.info("Message is from a Bot.")
 					return
-				# Handle messages here
 				await handle_messages(config, message, user_message_histories, history_file_name, bot, message_queue,image_queue)
 				
 			except Exception as e:
@@ -145,35 +134,38 @@ async def start_bot():
 			voice_client = member.guild.voice_client
 			if voice_client and voice_client.is_connected():
 				if before.channel is None and after.channel is not None:
-					# User joined the voice channel
 					print(f"{member.name} joined the voice channel")
 				elif before.channel is not None and after.channel is None:
-					# User left the voice channel
 					print(f"{member.name} left the voice channel")
 					await check_and_leave_voice_channel(member.guild)
 
+
+		observer = PollingObserver()
+		handler = ConfigFileHandler(config_path, handle_config_change)
+		observer.schedule(handler, os.path.dirname(config_path), recursive=False)
+		observer.start()
+
 		await bot.start(config["DiscordToken"])
+
 	except Exception as e:
 		logging.critical('Failed to start bot due to exception: %s', str(e))
-
-		logging.error(f"An error occurred during bot startup: {str(e)}")
+		if observer:
+			observer.stop()
+			observer.join()
+		raise
 
 async def handle_messages(config, message, user_message_histories, history_file_name, bot,message_queue,image_queue):
-	# Check if the message author is ignored or if any ignored words are present in the message
 	ignored_users = config.get("IgnoredUsers", [])
 	ignored_words = config.get("IgnoredWords", [])
 
 	try:
-		# Check if the message starts with '!'
 		if message.content.startswith('!'):
 			logging.debug("Message starts with '!'. Ignoring message.")
 			return
 		
-		# Logging additional information about the message
 		logging.info(f"Received message from {message.author} in channel {message.channel}")
 		logging.debug(f"message content: {message.content}")
 
-		# Check if the message is in an allowed channel
 		if not isinstance(message.channel, (discord.Thread, discord.DMChannel)):
 			if message.channel.id not in config["AllowedChannels"]:
 				logging.info("Message not in an allowed channel. Ignoring message.")
@@ -181,13 +173,10 @@ async def handle_messages(config, message, user_message_histories, history_file_
 		
 		logging.info(f"Received message: {message.content}")
 
-		# Check if the message is from  a DM
 		if message.channel.type == discord.ChannelType.private:
 			if message.author.id in config["AllowedDMUsers"]:
-				# Allow the message from an allowed DM user
 				pass
 			elif not config["AllowDMResponses"]:
-				# Ignore the message if  DM responses are not allowed
 				await message.channel.send("I Cannot talk here. Please try a regular Channel.")
 				logging.info("Message is from a DM.")
 				return
@@ -196,18 +185,15 @@ async def handle_messages(config, message, user_message_histories, history_file_
 			logging.info(f"Message author is ignored. Ignoring message.")
 			return	
 
-		# Check if the message author is ignored
 		if message.author.id in ignored_users and not config["bot_user"]:
 			logging.info("Message is from an ignored user. Ignoring message.")
 			await message.channel.send("I'm sorry, I cannot talk to you.")
 			return
 		
-		# Check if any ignored words are present in the message
 		if any(word.lower() in message.content.lower() for word in ignored_words):
 			logging.info("Message contains ignored words. Ignoring message.")
 			return
 		
-		# Check if the bot's name is mentioned
 		bot_name = config["Name"]
 		if not message.channel.type == discord.ChannelType.private:
 			if config.get("OnlyWhenCalled") and bot_name.lower() not in message.content.lower():
@@ -219,13 +205,12 @@ async def handle_messages(config, message, user_message_histories, history_file_
 		logging.debug(f"Received message: {message.content}")
 		
 
-		# Process messages without further checks
 		if "draw" in message.content.lower() or "send" in message.content.lower():
 			draw_msg = await message.channel.send("Hang on while I get that for you...")
 			image_queue.put_nowait(Draw_Task(config, message, user_message_histories, bot, draw_msg))
 		elif "txt2vid" in message.content.lower():
 			draw_msg = await message.channel.send("Hang on while I get that for you...")
-			await txt2vid(draw_msg,bot_name)
+			await txt2vid(config,draw_msg,bot_name)
 		elif "check models" in message.content.lower():
 			if message.channel.type == discord.ChannelType.private:
 				await print_available_models(config,message)
@@ -272,25 +257,29 @@ async def handle_messages(config, message, user_message_histories, history_file_
 				await message.channel.send('You need to be in a voice channel to use this command')
 				return		
 		elif message.guild:
-			# Check for voice channel presence and bot and user connection
-			voice_channel = None
-			for channel in message.guild.channels:
-				if channel.type == discord.ChannelType.voice:
-					voice_channel = channel
-					break
-			if voice_channel and message.author.voice:
-				async with channel.typing():
-					await VoiceRecvClient.process_recognized_speech(message.content, message)
-			else:
-				# Check if the message was sent in a DM channel
-				if message.channel.type == discord.ChannelType.private:
-					message_queue.put_nowait(Task(config, message, user_message_histories, bot, history_file_name))
+			voice_client = message.guild.voice_client
+			if voice_client and voice_client.is_connected() and message.author.voice:
+				if message.author.voice.channel == voice_client.channel:
+					async with message.channel.typing():
+						await VoiceRecvClient.process_recognized_speech(message.content, message)
 				else:
-					message_queue.put_nowait(Task(config, message, user_message_histories, bot, history_file_name))
+					await message.channel.send("You must be in the same voice channel as me to use this feature.")
+			else:
+				if message.channel.type == discord.ChannelType.private:
+					message_queue.put_nowait(Task(config, message, user_message_histories, history_file_name, bot))
+				else:
+					message_queue.put_nowait(Task(config, message, user_message_histories, history_file_name, bot))
 		else:
-			message_queue.put_nowait(Task(config, message, user_message_histories, bot, history_file_name))
+			message_queue.put_nowait(Task(config, message, user_message_histories, history_file_name, bot))
+
 	except Exception as e:
 		logging.error("An error occurred during bot startup: " + str(e))
 
-# Run the bot
-asyncio.run(start_bot())
+if __name__ == "__main__":
+	try:
+		asyncio.run(start_bot())
+	except KeyboardInterrupt:
+		if observer:
+			observer.stop()
+			observer.join()
+		logging.info("Exiting...")
