@@ -95,19 +95,10 @@ def parse_prompt(prompt, bot_name, config):
 			}
 		]
 
-		appearance_info = []
-
-		if "selfie" in prompt or "you" in prompt:
-			prompt = prompt.replace(bot_name, "").strip()
-			logging.info("The prompt contains Selfie so we are appending Appearance to the prompt.")
-			appearance_info = [{'role': 'user', 'content': config.get("Appearance", prompt)}]
-
-		else:
-			# Remove bot's name from the prompt
-			prompt = re.sub(r'\b{}\b'.format(re.escape(bot_name)), '', prompt, flags=re.IGNORECASE).strip()
-			# Log the prompt after removing bot's name
-			logging.debug("Prompt after removing bot's name:")
-			logging.debug(prompt)
+		prompt = re.sub(r'\b{}\b'.format(re.escape(bot_name)), '', prompt, flags=re.IGNORECASE).strip()
+		# Log the prompt after removing bot's name
+		logging.debug("Prompt after removing bot's name:")
+		logging.debug(prompt)
 
 		logging.info("Prompt parsed successfully.")
 		
@@ -115,7 +106,7 @@ def parse_prompt(prompt, bot_name, config):
 		prompt = [prompt] 
 		
 		# Construct prompt with additional_instructions, appearance_info, and prompt
-		prompt = json.dumps(additional_instructions + appearance_info) + " " + " ".join(prompt)
+		prompt = json.dumps(additional_instructions) + " " + " ".join(prompt)
 		logging.info(prompt)
 		
 		return prompt, upscale, additional_instructions

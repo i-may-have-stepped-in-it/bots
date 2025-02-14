@@ -1,6 +1,6 @@
 from threading import Thread
 from watchdog.observers.polling import PollingObserver
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileDeletedEvent, DirModifiedEvent # Import DirModifiedEvent
 from logging.handlers import TimedRotatingFileHandler
 import json
 import logging
@@ -22,21 +22,24 @@ def load_config(config_path):
 	return None
 
 class ConfigFileHandler(FileSystemEventHandler):
-	def __init__(self, config_path, on_change):
+	def __init__(self, config_dir, on_change):  # Now takes config_dir
 		super().__init__()
-		self.config_path = config_path
+		self.config_dir = config_dir        # Store config_dir
 		self.on_change = on_change
 
-	def on_modified(self, event):
-		if event.src_path == self.config_path:
-			logging.info("Config file has been modified. Exiting...")
-			self.on_change()
+	def on_any_event(self, event): # Respond to any event in directory
+		if event.src_path.startswith(self.config_dir): #check that the file is in config directory, and not somewhere else in the filesystem.
+			if isinstance(event, (FileModifiedEvent, FileDeletedEvent, DirModifiedEvent)):
+				logging.info(f"Change detected in config directory: {event}")
+				self.on_change()
+
 
 def observe_config_changes(on_change_callback):
+	config_dir = os.path.dirname(config_path) # Get the directory
 
-	handler = ConfigFileHandler(config_path, on_change_callback)
+	handler = ConfigFileHandler(config_dir, on_change_callback) # Pass directory
 	observer = PollingObserver()
-	observer.schedule(handler, os.path.dirname(config_path), recursive=False)
+	observer.schedule(handler, config_dir, recursive=False) # Watch directory
 	observer.start()
 
 	try:
@@ -45,8 +48,7 @@ def observe_config_changes(on_change_callback):
 	except KeyboardInterrupt:
 		observer.stop()
 		observer.join()
-
-observer = None  # Ensure observer is defined globally
+observer = None
 
 async def restart_bot():
 	global observer

@@ -10,7 +10,6 @@ import aiohttp
 from discord.ext.voice_recv.extras import *
 import os
 import aiofiles
-import docker
 from letta_client import AsyncLetta, MessageCreate, TerminalToolRule
 
 discord.opus._load_default()
@@ -129,19 +128,102 @@ async def get_or_create_memgpt_agent(config, user_id, discord_username, message)
 	if discord_user_id in discord_to_memgpt_user:
 		return discord_to_memgpt_user[discord_user_id]
 
-	client = AsyncLetta(base_url=config["MemGPTEndpoint"])
+	lettaclient = AsyncLetta(base_url=config["MemGPTEndpoint"])
+
+	# def generate_image_with_sd(prompt: str) -> str:
+	# 	"""
+	# 	Generates an image using a remote Stable Diffusion API.  Synchronous version.
+
+	# 	Retrieves Stable Diffusion parameters from environment variables.  These
+	# 	environment variables should be set by the calling agent.
+
+	# 	Args:
+	# 		prompt (str): The text prompt to be appended to the base
+	# 					positive prompt configured for the tool.
+
+	# 	Returns:
+	# 		str: A base64 encoded string of the generated image.
+	# 			Returns an error message string if image generation fails
+	# 			or if the API returns an unexpected response.
+
+	# 	Environment Variables:
+	# 		SD_API_URL: The URL of the Stable Diffusion API.
+	# 		SD_POSITIVE_PROMPT: The base positive prompt.
+	# 		SD_NEGATIVE_PROMPT: The negative prompt.
+	# 		SD_STEPS: The number of steps for image generation.
+	# 		SD_WIDTH: The width of the generated image.
+	# 		SD_HEIGHT: The height of the generated image.
+	# 		SD_SAMPLER: The sampler to use.
+	# 		SD_SCHEDULER: The scheduler to use.
+	# 		SD_CFG_SCALE: The Classifier-Free Guidance scale.
+	# 		SD_MODEL: The Stable Diffusion model checkpoint to use.
+	# 		SD_CLIP_SKIP: The number of CLIP layers to skip.
+
+	# 	Raises:
+	# 		requests.exceptions.RequestException: If there's an error communicating with the
+	# 							Stable Diffusion API.
+	# 		KeyError, IndexError: If the API response is in an unexpected format.
+	# 	"""
+	# 	import os
+	# 	import requests
+	# 	import base64
+
+	# 	sd_api_url = os.environ.get("SD_API_URL") + "/sdapi/v1/txt2img"
+
+	# 	positive_prompt = os.environ.get("SD_POSITIVE_PROMPT")
+	# 	negative_prompt = os.environ.get("SD_NEGATIVE_PROMPT")
+	# 	sampler = os.environ.get("SD_SAMPLER")
+	# 	scheduler = os.environ.get("SD_SCHEDULER")
+	# 	sd_model = os.environ.get("SD_MODEL")
+
+
+	# 	json_payload = {
+	# 		"prompt": positive_prompt + prompt,
+	# 		"negative_prompt": negative_prompt,
+	# 		"sampler_index": sampler,
+	# 		"scheduler": scheduler,
+	# 		"override_settings": {
+	# 			"sd_model_checkpoint": sd_model,
+	# 		}
+	# 	}
+
+	# 	try:
+	# 		response = requests.post(sd_api_url, json=json_payload)
+
+	# 		if response.status_code != 200:
+	# 			return f"Error: API returned status code {response.status_code}"
+
+	# 		try:
+	# 			response_data = response.json()
+	# 			image_data = response_data["images"][0]
+	# 			# Decode the base64 string *without* removing the header.  The API *should* be returning just the base64, but we account for the header.
+	# 			# image_base64 = image_data.replace("data:image/png;base64,", "") #original
+	# 			return image_data
+	# 		except (KeyError, IndexError) as e:
+	# 			print(f"Unexpected response: {e}")
+	# 			return "Error: Unexpected response from API"
+
+	# 	except requests.exceptions.RequestException as e:
+	# 		print(f"Error communicating with Stable Diffusion API: {e}")
+	# 		return f"Error: {e}"
+	# from letta_client import Letta
+	# letta_client = Letta(base_url=config["MemGPTEndpoint"])
+	# sd_tool = letta_client.tools.create_from_function(
+	# 	func=generate_image_with_sd,
+	# )
+
+	# print(f"Created tool {sd_tool.name}")
 
 	async def create_memgpt_agent(discord_username, message):
-		from utils.stable_diff import sd_tool
 		agent_data = {
 			"memory_blocks": [
-				{"label": "human", "value": f"The human's name is {discord_username}"},
+				{"label": "human", "value": f"The user's name is {discord_username}.\nThey have not provided any other information about themselves. \nI will need to ask them some questions to gather information."},
 				{"label": "persona", "value": config["MemGPTPersonality"]}
 			],
 			"system": config["MemGPTSystemPrompt"],
 			"llm_config": {
 				"model": config["MemGPTmodel"],
-				"context_window": config.get("MemGPTContextWindow", 8192),
+				"context_window": config.get("MemGPTContextWindow", 4096),
 				"model_endpoint_type": config.get("MemGPTModelEndpointType", "openai"),
 				"model_endpoint": config.get("MemGPTModelEndpoint")
 			},
@@ -151,14 +233,19 @@ async def get_or_create_memgpt_agent(config, user_id, discord_username, message)
 				"embedding_endpoint_type": config.get("MemGPTEmbeddingEndpointType", "openai"),
 				"embedding_endpoint": config.get("MemGPTEmbeddingEndpoint")
 			},
-		}
+			# "tool_ids": [sd_tool.id],  # Add the Stable Diffusion tool ID
+			# "tool_exec_environment_variables": {  # Add environment variables for the tool
+			# 	"SD_API_URL": str(config.get("SDURL")), # Get from config
+            #     "SD_POSITIVE_PROMPT": str(config.get("SDPositivePrompt")),
+            #     "SD_NEGATIVE_PROMPT": str(config.get("SDNegativePrompt")),
+            #     "SD_SAMPLER": str(config.get("SDSampler")),
+            #     "SD_SCHEDULER": str(config.get("SDScheduler")),
+            #     "SD_MODEL": str(config.get("SDmodel")),
 
-		# For logging only, use a custom encoder:
-		from pydantic.json import pydantic_encoder
-		logging.debug("Agent creation data: " + json.dumps(agent_data, indent=2, default=pydantic_encoder))
-		
+			# },
+		}
 		try:
-			response = await client.agents.create(**agent_data)
+			response = await lettaclient.agents.create(**agent_data)
 			agent_id = response.id
 			logging.debug(f"MemGPT Agent Created with ID: {agent_id}")
 			return agent_id
@@ -180,6 +267,13 @@ async def save_user_data():
 		await f.write(json.dumps(discord_to_memgpt_user, indent=4))
 		logging.info(f"Saved User Config")
 
+
+async def save_user_data():
+	logging.info(f"Saving user data")
+	async with aiofiles.open(USER_DATA_FILE, "w") as f:
+		await f.write(json.dumps(discord_to_memgpt_user, indent=4))
+		logging.info(f"Saved User Config")
+
 async def send_request_to_memgpt(config, messages, user_id, discord_username, message):
 	memgpt_agent_data = await get_or_create_memgpt_agent(config, user_id, discord_username, message)
 	agent_id = memgpt_agent_data['agent_id']
@@ -190,10 +284,10 @@ async def send_request_to_memgpt(config, messages, user_id, discord_username, me
 		response = await client.agents.messages.create(
 			agent_id=agent_id,
 			messages=[MessageCreate(role="user", content=message_content)],
-			use_assistant_message=False
+			use_assistant_message=config["MemGPTUseAssistantMessage"]
 		)
 
-		logging.info(f"MemGPT raw response: {response}")
+		logging.debug(f"MemGPT raw response: {response}")
 
 		if response and hasattr(response, 'messages') and isinstance(response.messages, list):
 			return_message = ""
@@ -205,8 +299,6 @@ async def send_request_to_memgpt(config, messages, user_id, discord_username, me
 					if hasattr(msg, "function_call") and msg.function_call:
 						try:
 							arguments = json.loads(msg.function_call.arguments or '{}')
-
-							# Check if a function call name is present and is send_message
 							if msg.function_call.name == "send_message":
 								return_message = arguments.get('message', '')
 								break
@@ -214,7 +306,6 @@ async def send_request_to_memgpt(config, messages, user_id, discord_username, me
 								logging.info(f"Function Call with name {msg.function_call.name} was not send_message.")
 						except json.JSONDecodeError:
 							logging.error("Failed to decode tool call arguments from MemGPT")
-							# return_message = "I'm having trouble processing the tool call response."
 							break
 					elif hasattr(msg, 'content') and msg.content:
 						return_message = msg.content
@@ -229,14 +320,13 @@ async def send_request_to_memgpt(config, messages, user_id, discord_username, me
 						break
 					except json.JSONDecodeError:
 						logging.error("Failed to decode tool call arguments from MemGPT")
-						# return_message = "I'm having trouble processing the tool call response."
 						break
 				elif hasattr(msg, "status") and msg.status:
 					logging.info(f"Tool response information: {msg.status}")
 			return return_message
 		else:
 			logging.error(f"Unexpected response format from MemGPT: {response}")
-	except Exception as e:  # Catch any Letta client exceptions
+	except Exception as e:
 		logging.error(f"MemGPT API request failed: {e}")
 		raise Exception(f"MemGPT API request failed: {e}")
 	
