@@ -30,17 +30,15 @@ WORKDIR /app
 COPY ./requirements.txt /app
 COPY --from=ghcr.io/astral-sh/uv:0.5.2 /uv /uvx /bin/
 # RUN pip3 install --upgrade pip
-RUN pip3 install -r requirements.txt
+RUN --mount=type=cache,target=/home/appuser/.cache/pip \
+    pip3 install -r requirements.txt
 
 # Copy the application files to the container
 COPY . /app
 RUN bash ./install_voice_recv.sh
 # Clone the discord.py repository and install it
 RUN uv pip install git+https://github.com/Rapptz/discord.py --system
-# RUN pip install invokeai[xformers] --use-pep517 --extra-index-url https://download.pytorch.org/whl/cu121
 
-# Creates a non-root user with an explicit UID and adds permission to access the /app folder
-# # For more info, please refer to https://aka.ms/vscode-docker-python-configure-containers
 RUN adduser -u 1000 --disabled-password --gecos "" appuser && chown -R appuser /app
 
 # Create the /app/config directory and set ownership to appuser
@@ -51,6 +49,4 @@ RUN chmod -R 777 /home/appuser/nltk_data && chown -R 1000:1000 /home/appuser/nlt
 # Switch to the appuser
 USER appuser
 
-# During debugging, this entry point will be overridden.
-# For more information, please refer to https://aka.ms/vscode-docker-python-debug
 CMD ["bash", "-c", "clear; ./entrypoint.sh"]

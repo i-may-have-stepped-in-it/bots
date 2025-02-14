@@ -28,3 +28,4 @@ imageio
 imageio-ffmpeg
 docker
 letta-client
+requests

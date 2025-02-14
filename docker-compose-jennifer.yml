@@ -1,8 +1,8 @@
 name: jennifer
 
-networks:
-  jennifer:
-    driver: bridge
+# networks:
+#   jennifer:
+#     driver: bridge
 
 services:
   init:
@@ -16,8 +16,8 @@ services:
       replicas: 1
       restart_policy:
         condition: none
-    networks:
-      - jennifer
+    # networks:
+    #   - jennifer
 
   jennifer:
     user: "1000:1000"
@@ -35,8 +35,8 @@ services:
     volumes:
       - ./config/:/app/config/
       - ./nltk_data:/home/appuser/nltk_data
-    networks:
-      - jennifer
+    # networks:
+    #   - jennifer
     tty: true # enable colorized logs
     restart: always
     deploy:
@@ -64,8 +64,8 @@ services:
       - 38078:38078
     env_file:
       - ./.env
-    networks:
-      - jennifer
+    # networks:
+    #   - jennifer
     volumes:
       - /var/lib/docker/volumes/midoriai_midori-ai-models/_data:/models:rshared
       - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/:rshared
@@ -84,8 +84,8 @@ services:
     ports:
       - 38078:38078
     privileged: true
-    networks:
-      - jennifer
+    # networks:
+    #   - jennifer
     env_file:
       - intel.env
     volumes:
@@ -109,8 +109,8 @@ services:
       - &v1 ../data:/data
       - &v2 ../output:/output
     stop_signal: SIGKILL
-    networks:
-      - jennifer
+    # networks:
+    #   - jennifer
     profiles: ["",intel,nvidia]
     deploy:
       resources:
@@ -121,7 +121,23 @@ services:
   download:
     build: ../services/download/
     profiles: ["download",""]
-    networks:
-      - jennifer
+    # networks:
+    #   - jennifer
     volumes:
       - *v1
+  letta:
+   extends:
+     file: ./letta/docker-compose.yaml
+     service: letta_server
+     pull_policy: always
+     profiles: ["",nvidia,intel]
+    #  networks:
+    #   - jennifer
+  letta_db:
+    extends:
+     file: ./letta/docker-compose.yaml
+     service: letta_db
+     pull_policy: always
+     profiles: ["",nvidia,intel]
+    #  networks:
+    #   - jennifer
