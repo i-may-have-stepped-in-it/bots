@@ -74,7 +74,7 @@ def handle_config_change():
 	asyncio.run(restart_bot())  # ✅ Restart the bot properly
 
 config_path = "./config/config.json"
-
+config_dir = "./config"
 def log_setup(config):
 	log_level = config.get("LogLevel", "INFO")
 	logging.basicConfig(
