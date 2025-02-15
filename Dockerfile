@@ -1,20 +1,11 @@
-# For more information, please refer to https://aka.ms/vscode-docker-python
-FROM python:3.12-slim
+FROM python:3.12-slim AS build-env
 
-# Keeps Python from generating .pyc files in the container
 ENV PYTHONDONTWRITEBYTECODE=1
-
-# Turns off buffering for easier container logging
 ENV PYTHONUNBUFFERED=1
 ENV TORCH_HOME=/app/torch
-RUN mkdir -p ${TORCH_HOME}/hub
-RUN chmod -R 777 /app/
-# Install necessary dependencies
-RUN apt-get update -qy
-RUN apt-get upgrade -qy
-RUN apt-get install -qyy \
-    -o APT::Install-Recommends=false \
-    -o APT::Install-Suggests=false \
+
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -yy --no-install-recommends --no-install-suggests \
     build-essential \
     ca-certificates \
     python3-setuptools \
@@ -23,30 +14,43 @@ RUN apt-get install -qyy \
     libffi-dev \
     git \
     curl \
-    iputils-ping\
-    libsodium-dev 
-# Set the working directory
-WORKDIR /app
-COPY ./requirements.txt /app
+    iputils-ping \
+    libsodium-dev
+
 COPY --from=ghcr.io/astral-sh/uv:0.5.2 /uv /uvx /bin/
-# RUN pip3 install --upgrade pip
-RUN --mount=type=cache,target=/home/appuser/.cache/pip \
-    pip3 install -r requirements.txt
 
-# Copy the application files to the container
+WORKDIR /app
+
 COPY . /app
+COPY ./requirements.txt /app
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install -r requirements.txt && \
+    uv pip install git+https://github.com/Rapptz/discord.py --system
+
+COPY ./utils/discord-ext-voice-recv /app/utils/discord-ext-voice-recv
+COPY ./install_voice_recv.sh /app
 RUN bash ./install_voice_recv.sh
-# Clone the discord.py repository and install it
-RUN uv pip install git+https://github.com/Rapptz/discord.py --system
+FROM python:3.12-slim AS runtime
 
-RUN adduser -u 1000 --disabled-password --gecos "" appuser && chown -R appuser /app
+COPY --from=build-env /usr/local/bin /usr/local/bin
+COPY --from=build-env /usr/local/lib /usr/local/lib
+COPY --from=build-env /bin/uv /bin/uv
+COPY --from=build-env /bin/uvx /bin/uvx
+COPY --from=build-env /app /app
 
-# Create the /app/config directory and set ownership to appuser
-RUN mkdir -p /app/config && chown -R 1000:1000 /app/config
-RUN mkdir /home/appuser/nltk_data
-RUN chmod -R 777 /home/appuser/nltk_data && chown -R 1000:1000 /home/appuser/nltk_data
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV TORCH_HOME=/app/torch
 
-# Switch to the appuser
+WORKDIR /app
+
+RUN mkdir -p ${TORCH_HOME}/hub
+
+RUN adduser -u 1000 --disabled-password --gecos "" appuser
+
+RUN mkdir -p /home/appuser/nltk_data /app/config
+RUN chown -R 1000:1000 /app /home/appuser/nltk_data /app/config
 USER appuser
 
 CMD ["bash", "-c", "clear; ./entrypoint.sh"]

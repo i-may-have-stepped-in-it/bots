@@ -223,15 +223,15 @@ async def get_or_create_memgpt_agent(config, user_id, discord_username, message)
 			"system": config["MemGPTSystemPrompt"],
 			"llm_config": {
 				"model": config["MemGPTmodel"],
-				"context_window": config.get("MemGPTContextWindow", 4096),
-				"model_endpoint_type": config.get("MemGPTModelEndpointType", "openai"),
-				"model_endpoint": config.get("MemGPTModelEndpoint")
+				"context_window": config["MemGPTContextWindow"],
+				"model_endpoint_type": config["MemGPTModelEndpointType"],
+				"model_endpoint": config["MemGPTModelEndpoint"]
 			},
 			"embedding_config": {
-				"embedding_model": config.get("MemGPTEmbedding", "text-embedding-ada-002"),
-				"embedding_dim": config.get("MemGPTEmbeddingDim", 1536),
-				"embedding_endpoint_type": config.get("MemGPTEmbeddingEndpointType", "openai"),
-				"embedding_endpoint": config.get("MemGPTEmbeddingEndpoint")
+				"embedding_model": config["MemGPTEmbedding"],
+				"embedding_dim": config["MemGPTEmbeddingDim"],
+				"embedding_endpoint_type": config["MemGPTEmbeddingEndpointType"],
+				"embedding_endpoint": config["MemGPTEmbeddingEndpoint"]
 			},
 			# "tool_ids": [sd_tool.id],  # Add the Stable Diffusion tool ID
 			# "tool_exec_environment_variables": {  # Add environment variables for the tool
@@ -248,6 +248,7 @@ async def get_or_create_memgpt_agent(config, user_id, discord_username, message)
 			response = await lettaclient.agents.create(**agent_data)
 			agent_id = response.id
 			logging.debug(f"MemGPT Agent Created with ID: {agent_id}")
+			logging.info(f"Agent Name: {response.name}")
 			return agent_id
 		except Exception as e:
 			logging.error(f"MemGPT agent creation failed: {e}")
