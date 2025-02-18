@@ -22,15 +22,17 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.2 /uv /uvx /bin/
 WORKDIR /app
 
 COPY . /app
-COPY ./requirements.txt /app
 
+COPY ./requirements.txt /app
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install -r requirements.txt && \
     uv pip install git+https://github.com/Rapptz/discord.py --system
 
 COPY ./utils/discord-ext-voice-recv /app/utils/discord-ext-voice-recv
 COPY ./install_voice_recv.sh /app
+
 RUN bash ./install_voice_recv.sh
+
 FROM python:3.12-slim AS runtime
 
 COPY --from=build-env /usr/local/bin /usr/local/bin
@@ -50,7 +52,9 @@ RUN mkdir -p ${TORCH_HOME}/hub
 RUN adduser -u 1000 --disabled-password --gecos "" appuser
 
 RUN mkdir -p /home/appuser/nltk_data /app/config
+
 RUN chown -R 1000:1000 /app /home/appuser/nltk_data /app/config
+
 USER appuser
 
 CMD ["bash", "-c", "clear; ./entrypoint.sh"]

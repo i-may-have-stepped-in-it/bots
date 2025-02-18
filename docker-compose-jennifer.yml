@@ -71,7 +71,7 @@ services:
       - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/:rshared
       - /var/lib/docker/volumes/midoriai_midori-ai-audio/_data:/tmp/generated/audio/:rshared
       - ./.env:/build/.env
-    command: [local-ai]
+    command: [ local-ai ]
 
   jennifer-text-backend-intel:
     deploy:

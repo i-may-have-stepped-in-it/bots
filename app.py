@@ -159,9 +159,6 @@ async def handle_messages(config, message, user_message_histories, history_file_
 	ignored_words = config.get("IgnoredWords", [])
 
 	try:
-		if message.content.startswith('!'):
-			logging.debug("Message starts with '!'. Ignoring message.")
-			return
 		
 		logging.info(f"Received message from {message.author} in channel {message.channel}")
 		logging.debug(f"message content: {message.content}")
@@ -205,25 +202,25 @@ async def handle_messages(config, message, user_message_histories, history_file_
 		logging.debug(f"Received message: {message.content}")
 		
 
-		if "draw" in message.content.lower() or "send" in message.content.lower():
+		if "!draw" in message.content.lower() or "!send" in message.content.lower():
 			draw_msg = await message.channel.send("Hang on while I get that for you...")
 			image_queue.put_nowait(Draw_Task(config, message, user_message_histories, bot, draw_msg))
-		elif "txt2vid" in message.content.lower():
+		elif "!txt2vid" in message.content.lower():
 			draw_msg = await message.channel.send("Hang on while I get that for you...")
 			await txt2vid(config,draw_msg,bot_name)
-		elif "check models" in message.content.lower():
+		elif "!check models" in message.content.lower():
 			if message.channel.type == discord.ChannelType.private:
 				await print_available_models(config,message)
 			else: 
 				await message.channel.send("I'm sorry, I cannot run that here.")
 				return
-		elif "teamviewer" in message.content.lower():
+		elif "!teamviewer" in message.content.lower():
 			if message.channel.type == discord.ChannelType.private:
 				await print_available_models(config,message)
 			else: 
 				await message.channel.send("I'm sorry, I cannot run that here.")
 				return
-		elif "load model" in message.content.lower():
+		elif "!load model" in message.content.lower():
 			if message.channel.type == discord.ChannelType.private:
 				try:
 					load_msg = await message.channel.send(f"Loading model {message.content[10:]}.")
@@ -234,7 +231,44 @@ async def handle_messages(config, message, user_message_histories, history_file_
 					await load_msg.edit(content= "I am sorry there is a problem with my camera.")
 			else:
 				await message.channel.send("I'm sorry, I cannot run that here.")
-		elif "join_vc" in message.content.lower() or "join-vc" in message.content.lower():
+		elif "!recreate agent" in message.content.lower():
+			if message.channel.type == discord.ChannelType.private:
+				try:
+					load_msg = await message.channel.send("Recreating agent.")
+					await delete_agent_and_user_data(config,message,load_msg)
+					logging.info("Restarting process...")
+					os.execv(sys.executable, [sys.executable] + sys.argv)
+					return
+				except:
+					await load_msg.edit(content= "I am sorry there is a problem recreating the agent.")
+			else:
+				await message.channel.send("I'm sorry, I cannot run that here.")
+		elif "!reset agent" in message.content.lower():
+				if message.channel.type == discord.ChannelType.private:
+					try:
+						await reset_messages(config,message)
+						await message.channel.send("Messages reset successfully.")
+					except:
+						await message.channel.send("I am sorry there is a problem with resetting the messages.")
+						return
+				else:
+					await message.channel.send("I'm sorry, I cannot run that here.")
+					return	
+		elif "!help" in message.content.lower() or "!commands" in message.content.lower():
+			if message.channel.type == discord.ChannelType.private:
+				help_msg = await message.channel.send("Here are the commands you can use:")
+				help_msg = await message.channel.send("`!join_vc` - Join the voice channel")
+				help_msg = await message.channel.send("`!leave_vc` - Leave the voice channel")
+				help_msg = await message.channel.send("`!draw <prompt>` - Generate an image based on the prompt")
+				help_msg = await message.channel.send("`!txt2vid <prompt>` - Generate a video based on the prompt")
+				help_msg = await message.channel.send("`!check models` - Check available models")
+				help_msg = await message.channel.send("`!load model <model_name>` - Load a specific model")
+				help_msg = await message.channel.send("`!recreate agent` - Recreate the agent")
+				help_msg = await message.channel.send("`!reset agent` - Reset messages")
+			else:
+				await message.channel.send("I'm sorry, I cannot run that here.")
+				return			
+		elif "!join_vc" in message.content.lower() or "!join-vc" in message.content.lower():
 			if message.author.voice:
 				try:
 					await join_voice_channel(message, message.author.voice.channel.id)
@@ -246,7 +280,7 @@ async def handle_messages(config, message, user_message_histories, history_file_
 			else:
 				await message.channel.send('You need to be in a voice channel to use this command')
 				return
-		elif "leave_vc" in message.content.lower() or "leave-vc" in message.content.lower():
+		elif "!leave_vc" in message.content.lower() or "!leave-vc" in message.content.lower():
 			if message.author.voice:
 				voice_client = message.guild.voice_client
 				if voice_client and voice_client.is_connected():

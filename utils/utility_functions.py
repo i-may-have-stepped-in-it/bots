@@ -1,4 +1,6 @@
 from functools import cache
+from http import client
+from venv import create
 from openai import AsyncOpenAI
 import logging
 import asyncio
@@ -236,28 +238,30 @@ async def get_or_create_memgpt_agent(config, user_id, discord_username, message)
 			# "tool_ids": [sd_tool.id],  # Add the Stable Diffusion tool ID
 			# "tool_exec_environment_variables": {  # Add environment variables for the tool
 			# 	"SD_API_URL": str(config.get("SDURL")), # Get from config
-            #     "SD_POSITIVE_PROMPT": str(config.get("SDPositivePrompt")),
-            #     "SD_NEGATIVE_PROMPT": str(config.get("SDNegativePrompt")),
-            #     "SD_SAMPLER": str(config.get("SDSampler")),
-            #     "SD_SCHEDULER": str(config.get("SDScheduler")),
-            #     "SD_MODEL": str(config.get("SDmodel")),
+			#     "SD_POSITIVE_PROMPT": str(config.get("SDPositivePrompt")),
+			#     "SD_NEGATIVE_PROMPT": str(config.get("SDNegativePrompt")),
+			#     "SD_SAMPLER": str(config.get("SDSampler")),
+			#     "SD_SCHEDULER": str(config.get("SDScheduler")),
+			#     "SD_MODEL": str(config.get("SDmodel")),
 
 			# },
 		}
 		try:
 			response = await lettaclient.agents.create(**agent_data)
 			agent_id = response.id
+			agent_name = response.name
 			logging.debug(f"MemGPT Agent Created with ID: {agent_id}")
-			logging.info(f"Agent Name: {response.name}")
-			return agent_id
+			logging.info(f"Agent Name: {agent_name}")
+			return agent_id, agent_name
 		except Exception as e:
 			logging.error(f"MemGPT agent creation failed: {e}")
 			raise Exception(f"Failed to create MemGPT agent: {e}")
 
-	memgpt_agent_id = await create_memgpt_agent(discord_username, message)
+	memgpt_agent_id, memgpt_agent_name = await create_memgpt_agent(discord_username, message)
 
-	discord_to_memgpt_user[discord_user_id] = {'agent_id': memgpt_agent_id}
+	discord_to_memgpt_user[discord_user_id] = {'agent_id': memgpt_agent_id, 'agent_name': memgpt_agent_name}
 	logging.info(f"Storing agent ID: {memgpt_agent_id}")
+	logging.info(f"Storing agent name: {memgpt_agent_name}")
 	await save_user_data()
 	return discord_to_memgpt_user[discord_user_id]
 
@@ -268,17 +272,69 @@ async def save_user_data():
 		await f.write(json.dumps(discord_to_memgpt_user, indent=4))
 		logging.info(f"Saved User Config")
 
+async def delete_agent_and_user_data(config, message, load_msg):
+	client = AsyncLetta(base_url=config["MemGPTEndpoint"], token=config["MemGPTBearer"])
+	logging.info("Deleting agent and user data")
+	
+	user_id = message.author.id
+	
+	async with aiofiles.open(USER_DATA_FILE, "r") as f:
+		user_data = json.loads(await f.read())
+		
+		# Access the agent_id using the user_id
+		# Assuming that user_id is the outer key in the JSON
+		agent_id = user_data.get(str(user_id), {}).get('agent_id')
 
-async def save_user_data():
-	logging.info(f"Saving user data")
-	async with aiofiles.open(USER_DATA_FILE, "w") as f:
-		await f.write(json.dumps(discord_to_memgpt_user, indent=4))
-		logging.info(f"Saved User Config")
+		# Check if agent_id was found
+		if agent_id:
+			logging.info(f"Agent ID: {agent_id}")
+		else:
+			logging.warning(f"No agent ID found for user ID: {user_id}")
+	try:
+		await client.agents.delete(agent_id=agent_id)
+		logging.info(f"Deleted agent {agent_id}")
+	except Exception as e:
+		logging.error(f"Error deleting agent {agent_id}: {e}")
+	try:
+		os.remove(USER_DATA_FILE)
+		logging.info(f"Deleted User Config")
+		await load_msg.edit(content=load_msg.content + "\n" + "Agent recreated successfully.")
+	except FileNotFoundError:
+		logging.info(f"No user data file found")
+
+async def reset_messages(config, message) -> None:
+	"""
+	Resets the messages for a given agent.
+
+	Args:
+		user_id (int): The ID of the user to reset messages for.
+		token (str): The bearer token for the MemGPT API.
+	"""
+	user_id=message.author.id
+	async with aiofiles.open(USER_DATA_FILE, "r") as f:
+		user_data = json.loads(await f.read())
+
+	# Access the agent_id using the user_id
+	# Assuming that user_id is the outer key in the JSON
+	agent_id = user_data.get(str(user_id), {}).get('agent_id')
+
+	# Check if agent_id was found
+	if agent_id:
+		logging.info(f"Agent ID: {agent_id}")
+	else:
+		logging.warning(f"No agent ID found for user ID: {user_id}")
+
+	url = f"{config['MemGPTEndpoint']}/v1/agents/{agent_id}/reset-messages?add_default_initial_messages=true"
+	headers = {"Authorization": f"Bearer {config['MemGPTBearer']}"}
+
+	async with aiohttp.ClientSession() as session:
+		async with session.patch(url, headers=headers) as response:
+			response.raise_for_status()
 
 async def send_request_to_memgpt(config, messages, user_id, discord_username, message):
 	memgpt_agent_data = await get_or_create_memgpt_agent(config, user_id, discord_username, message)
 	agent_id = memgpt_agent_data['agent_id']
-	client = AsyncLetta(base_url=config["MemGPTEndpoint"], timeout=300)
+	client = AsyncLetta(base_url=config["MemGPTEndpoint"], timeout=config["MemGPTtimeout"])
 	message_content = messages[0]['content']
 
 	try:
@@ -380,4 +436,5 @@ async def txt2vid(config,message,bot_name):
 
 			image_url = response_data["candidates"][0]["url"]
 			logging.info(f"Generated image URL: {image_url}")
+			await message.channel.send(image_url)
 			await message.channel.send(image_url)
