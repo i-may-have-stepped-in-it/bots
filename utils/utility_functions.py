@@ -78,7 +78,7 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 
 			logging.info(f"Sending data to {'MemGPT' if use_memgpt else 'OpenAI'}: {messages}")
 
-			if use_memgpt:
+			if use_memgpt:		
 				response = await send_request_to_memgpt(config, messages, user_id, discord_username, message)
 				if response:
 					logging.info(f"MemGPT Response: {response}")
@@ -126,11 +126,14 @@ else:
 	discord_to_memgpt_user = {}
 
 async def get_or_create_memgpt_agent(config, user_id, discord_username, message):
+	user_data = await load_user_data()
 	discord_user_id = str(user_id)
-	if discord_user_id in discord_to_memgpt_user:
-		return discord_to_memgpt_user[discord_user_id]
+
+	if discord_user_id in user_data:
+		return user_data[discord_user_id, user_data]
 
 	lettaclient = AsyncLetta(base_url=config["MemGPTEndpoint"])
+
 
 	# def generate_image_with_sd(prompt: str) -> str:
 	# 	"""
@@ -259,48 +262,63 @@ async def get_or_create_memgpt_agent(config, user_id, discord_username, message)
 
 	memgpt_agent_id, memgpt_agent_name = await create_memgpt_agent(discord_username, message)
 
-	discord_to_memgpt_user[discord_user_id] = {'agent_id': memgpt_agent_id, 'agent_name': memgpt_agent_name}
-	logging.info(f"Storing agent ID: {memgpt_agent_id}")
+	user_data[discord_user_id] = {'agent_id': memgpt_agent_id, 'agent_name': memgpt_agent_name}
+	logging.info(f"Storing agent ID: {memgpt_agent_id} for user {discord_user_id}")
 	logging.info(f"Storing agent name: {memgpt_agent_name}")
-	await save_user_data()
-	return discord_to_memgpt_user[discord_user_id]
+	await save_user_data(user_data)
+
+	return user_data[discord_user_id], user_data  #Return the whole dictionary
+
+async def save_user_data(user_data):
+	logging.info(f"Saving user data: {user_data}")  # Log the data being saved
+
+	def dump_json_to_file(data, filename):
+		with open(filename, 'w') as sync_f:
+			json.dump(data, sync_f, indent=4)
+			sync_f.write('\n')
+
+	await asyncio.to_thread(dump_json_to_file, user_data, USER_DATA_FILE)
+	logging.info("Saved User Config")
+
+USER_DATA_FILE = "/app/config/memgpt_user_data.json"
+
+async def load_user_data():
+	try:
+		async with aiofiles.open(USER_DATA_FILE, "r") as f:
+			contents = await f.read()
+			try:
+				return json.loads(contents)
+			except json.JSONDecodeError:
+				return {}  # Return empty dict if file is empty or corrupted
+	except FileNotFoundError:
+		return {}  # Return empty dict if file doesn't exist
 
 
-async def save_user_data():
-	logging.info(f"Saving user data")
-	async with aiofiles.open(USER_DATA_FILE, "w") as f:
-		await f.write(json.dumps(discord_to_memgpt_user, indent=4))
-		logging.info(f"Saved User Config")
 
 async def delete_agent_and_user_data(config, message, load_msg):
 	client = AsyncLetta(base_url=config["MemGPTEndpoint"], token=config["MemGPTBearer"])
 	logging.info("Deleting agent and user data")
-	
-	user_id = message.author.id
-	
-	async with aiofiles.open(USER_DATA_FILE, "r") as f:
-		user_data = json.loads(await f.read())
-		
-		# Access the agent_id using the user_id
-		# Assuming that user_id is the outer key in the JSON
-		agent_id = user_data.get(str(user_id), {}).get('agent_id')
 
-		# Check if agent_id was found
+	user_id = str(message.author.id)
+	user_data = await load_user_data()
+
+	if user_id in user_data:
+		agent_id = user_data[user_id].get('agent_id')
 		if agent_id:
-			logging.info(f"Agent ID: {agent_id}")
+			try:
+				await client.agents.delete(agent_id=agent_id)
+				logging.info(f"Deleted agent {agent_id}")
+			except Exception as e:
+				logging.error(f"Error deleting agent {agent_id}: {e}")
+
+			del user_data[user_id]  # Remove user from dictionary
+			await save_user_data(user_data) # Save updated dictionary
+			await load_msg.edit(content=load_msg.content + "\n" + "Agent data removed successfully.")
 		else:
 			logging.warning(f"No agent ID found for user ID: {user_id}")
-	try:
-		await client.agents.delete(agent_id=agent_id)
-		logging.info(f"Deleted agent {agent_id}")
-	except Exception as e:
-		logging.error(f"Error deleting agent {agent_id}: {e}")
-	try:
-		os.remove(USER_DATA_FILE)
-		logging.info(f"Deleted User Config")
-		await load_msg.edit(content=load_msg.content + "\n" + "Agent recreated successfully.")
-	except FileNotFoundError:
-		logging.info(f"No user data file found")
+	else:
+		logging.warning(f"No data found for user ID: {user_id}")
+
 
 async def reset_messages(config, message) -> None:
 	"""
@@ -332,8 +350,8 @@ async def reset_messages(config, message) -> None:
 			response.raise_for_status()
 
 async def send_request_to_memgpt(config, messages, user_id, discord_username, message):
-	memgpt_agent_data = await get_or_create_memgpt_agent(config, user_id, discord_username, message)
-	agent_id = memgpt_agent_data['agent_id']
+	memgpt_agent_data, _ = await get_or_create_memgpt_agent(config, user_id, discord_username, message)  # Receive the tuple correctly
+	agent_id = memgpt_agent_data['agent_id']  # Access agent_id
 	client = AsyncLetta(base_url=config["MemGPTEndpoint"], timeout=config["MemGPTtimeout"])
 	message_content = messages[0]['content']
 
@@ -348,9 +366,11 @@ async def send_request_to_memgpt(config, messages, user_id, discord_username, me
 
 		if response and hasattr(response, 'messages') and isinstance(response.messages, list):
 			return_message = ""
+			reasoning = ""
 			for msg in response.messages:
 				if hasattr(msg, 'reasoning') and msg.reasoning:
 					logging.info(f"Agent reasoning: {msg.reasoning}")
+					reasoning += msg.reasoning + "\n"  # Accumulate reasoning
 
 				if hasattr(msg, 'message_type') and msg.message_type == 'assistant_message':
 					if hasattr(msg, "function_call") and msg.function_call:
@@ -358,7 +378,7 @@ async def send_request_to_memgpt(config, messages, user_id, discord_username, me
 							arguments = json.loads(msg.function_call.arguments or '{}')
 							if msg.function_call.name == "send_message":
 								return_message = arguments.get('message', '')
-								break
+								break  # Exit loop after getting the message
 							else:
 								logging.info(f"Function Call with name {msg.function_call.name} was not send_message.")
 						except json.JSONDecodeError:
@@ -366,7 +386,7 @@ async def send_request_to_memgpt(config, messages, user_id, discord_username, me
 							break
 					elif hasattr(msg, 'content') and msg.content:
 						return_message = msg.content
-						break
+						break  # Exit loop after getting the content
 					else:
 						logging.info("Message type is assistant_message, but no content or function call was found.")
 
@@ -374,13 +394,15 @@ async def send_request_to_memgpt(config, messages, user_id, discord_username, me
 					try:
 						arguments = json.loads(msg.tool_call.arguments)
 						return_message = arguments.get('message', '')
-						break
+						break  # Exit loop after getting the message
 					except json.JSONDecodeError:
 						logging.error("Failed to decode tool call arguments from MemGPT")
 						break
 				elif hasattr(msg, "status") and msg.status:
 					logging.info(f"Tool response information: {msg.status}")
-			return return_message
+
+			return f"{reasoning.strip()}\n\n{return_message}" # Return reasoning and message
+
 		else:
 			logging.error(f"Unexpected response format from MemGPT: {response}")
 	except Exception as e:

@@ -1,9 +1,5 @@
 name: jennifer
 
-# networks:
-#   jennifer:
-#     driver: bridge
-
 services:
   init:
     image: busybox
@@ -16,8 +12,6 @@ services:
       replicas: 1
       restart_policy:
         condition: none
-    # networks:
-    #   - jennifer
 
   jennifer:
     user: "1000:1000"
@@ -35,8 +29,6 @@ services:
     volumes:
       - ./config/:/app/config/
       - ./nltk_data:/home/appuser/nltk_data
-    # networks:
-    #   - jennifer
     tty: true # enable colorized logs
     restart: always
     deploy:
@@ -45,7 +37,7 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [compute, utility]
 
   jennifer-text-backend-nvidia:
     deploy:
@@ -54,18 +46,17 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [compute, utility]
     image: lunamidori5/midori_ai_subsystem_localai_nvidia_gpu:master
     pull_policy: always # always pull the latest
     profiles: [nvidia,""]
     tty: true # enable colorized logs
     restart: always # should this be on-failure ?
+    network_mode: host
     ports:
       - 38078:38078
     env_file:
       - ./.env
-    # networks:
-    #   - jennifer
     volumes:
       - /var/lib/docker/volumes/midoriai_midori-ai-models/_data:/models:rshared
       - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/:rshared
@@ -84,8 +75,7 @@ services:
     ports:
       - 38078:38078
     privileged: true
-    # networks:
-    #   - jennifer
+    network_mode: host
     env_file:
       - intel.env
     volumes:
@@ -95,9 +85,7 @@ services:
       - ./intel.env:/build/.env
     command: [ "local-ai" ]
   stable-diffusion-jennifer: &automatic
-    # <<: *base_service
     container_name: stable-diffusion-jennifer
-    # build: ../services/AUTOMATIC1111
     image: idacat411/stable-diffusion:latest
     restart: unless-stopped
     tty: true
@@ -109,8 +97,6 @@ services:
       - &v1 ../data:/data
       - &v2 ../output:/output
     stop_signal: SIGKILL
-    # networks:
-    #   - jennifer
     profiles: ["",intel,nvidia]
     deploy:
       resources:
@@ -121,8 +107,6 @@ services:
   download:
     build: ../services/download/
     profiles: ["download",""]
-    # networks:
-    #   - jennifer
     volumes:
       - *v1
   letta:
@@ -131,13 +115,63 @@ services:
      service: letta_server
      pull_policy: always
      profiles: ["",nvidia,intel]
-    #  networks:
-    #   - jennifer
+     environment:
+      ./letta/.env
   letta_db:
     extends:
      file: ./letta/docker-compose.yaml
      service: letta_db
      pull_policy: always
      profiles: ["",nvidia,intel]
-    #  networks:
-    #   - jennifer
+     environment:
+      ./letta/.env
+  vllm:
+    image: idacat411/vllm-xpu:latest
+    container_name: vllm
+    build:
+      dockerfile: ./vllm/Dockerfile.xpu
+    ports:
+      - "8050:8000"
+    profiles: [vllm]
+    volumes:
+      - ./hfcache:/root.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [compute, utility]
+    command: [
+      "--host", "${VLLM_HOST}", "--port", "8000",
+      "--gpu-memory-utilization", "${GPU_PERCENTAGE}",
+      "--max-model-len", "${MAX_MODEL_LEN}",
+      "--model", "${HF_MODEL}"
+    ]
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
+      HF_MODEL: ${HF_MODEL}
+      HF_CACHE_DIR: ${HF_CACHE_DIR}
+      VLLM_PORT: ${VLLM_PORT}
+      VLLM_HOST: ${VLLM_HOST}
+      GPU_PERCENTAGE: ${GPU_PERCENTAGE}
+      MAX_MODEL_LEN: ${MAX_MODEL_LEN}
+    env_file:
+      - ./vllm/.env
+  jennifer-text-backend-cpu:
+    deploy:
+    image: lunamidori5/localai_cpu:master
+    tty: true # enable colorized logs
+    restart: always # should this be on-failure ?
+    profiles: ["auto-cpu",""]
+    pull_policy: always # always pull the latest
+    ports:
+      - 38078:38078
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - /var/lib/docker/volumes/midoriai_midori-ai-models/_data:/models:rshared
+      - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/:rshared
+      - /var/lib/docker/volumes/midoriai_midori-ai-audio/_data:/tmp/generated/audio/:rshared
+    command: [ "local-ai" ]
