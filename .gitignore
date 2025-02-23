@@ -18,3 +18,5 @@ nltk_data/
 nltk_data/
 config/memgpt_user_data.json
 /letta/.persist/
+.env
+intel.env
