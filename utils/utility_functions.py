@@ -52,8 +52,9 @@ async def generate_response(config, user_id, discord_username, user_message_hist
 async def try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid, use_memgpt):
 		try:
 			recent_message_content = ""
-			if user_id in user_message_histories and user_message_histories[user_id]:
-				recent_message_content = user_message_histories[user_id][-2]['content'] if len(user_message_histories[user_id]) > 1 else ""
+			user_id_str = str(user_id)
+			if user_id_str in user_message_histories and user_message_histories[user_id_str]:
+				recent_message_content = user_message_histories[user_id_str][-2]['content'] if len(user_message_histories[user_id_str]) > 1 else ""
 			logging.debug(f"Recent message content: {recent_message_content}")
 
 			messages = []
@@ -71,13 +72,12 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 				messages.append({'role': 'user', 'content': message.content})
 				logging.info("Included message content from provided message.")
 
-			if isinstance(prompt, str)and prompt != None:
+			if isinstance(prompt, str) and prompt:  #Simplified condition
 				logging.info("Using provided prompt:")
 				logging.debug(prompt)
 				messages.append({'role': 'user', 'content': prompt})
 
 			logging.info(f"Sending data to {'MemGPT' if use_memgpt else 'OpenAI'}: {messages}")
-
 			if use_memgpt:		
 				response = await send_request_to_memgpt(config, messages, user_id, discord_username, message)
 				if response:
@@ -103,7 +103,7 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 					response = await client.chat.completions.create(
 						model=config["SecondaryOpenaiModel"],
 						messages=messages,
-		)
+					)
 				logging.info("API response received.")
 				logging.debug(response)
 				response_text = response.choices[0].message.content
@@ -114,7 +114,7 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 					return [response_text]
 
 		except Exception as e:
-			logging.error("An error occurred during API call in try_generate_response: " + str(e))
+			logging.error("An error occurred during API call in try_generate_response: " + str(e), exc_info=True)
 			raise
 
 USER_DATA_FILE = "/app/config/memgpt_user_data.json"
@@ -130,7 +130,7 @@ async def get_or_create_memgpt_agent(config, user_id, discord_username, message)
 	discord_user_id = str(user_id)
 
 	if discord_user_id in user_data:
-		return user_data[discord_user_id, user_data]
+		return user_data[discord_user_id]  # Correctly returns the user's data
 
 	lettaclient = AsyncLetta(base_url=config["MemGPTEndpoint"])
 
@@ -267,7 +267,7 @@ async def get_or_create_memgpt_agent(config, user_id, discord_username, message)
 	logging.info(f"Storing agent name: {memgpt_agent_name}")
 	await save_user_data(user_data)
 
-	return user_data[discord_user_id], user_data  #Return the whole dictionary
+	return user_data[discord_user_id]  # Return only the user's data
 
 async def save_user_data(user_data):
 	logging.info(f"Saving user data: {user_data}")  # Log the data being saved
@@ -350,65 +350,68 @@ async def reset_messages(config, message) -> None:
 			response.raise_for_status()
 
 async def send_request_to_memgpt(config, messages, user_id, discord_username, message):
-	memgpt_agent_data, _ = await get_or_create_memgpt_agent(config, user_id, discord_username, message)  # Receive the tuple correctly
-	agent_id = memgpt_agent_data['agent_id']  # Access agent_id
-	client = AsyncLetta(base_url=config["MemGPTEndpoint"], timeout=config["MemGPTtimeout"])
-	message_content = messages[0]['content']
+    memgpt_agent_data = await get_or_create_memgpt_agent(config, user_id, discord_username, message)
+    agent_id = memgpt_agent_data['agent_id']
+    client = AsyncLetta(base_url=config["MemGPTEndpoint"], timeout=config["MemGPTtimeout"])
+    message_content = messages[0]['content']
 
-	try:
-		response = await client.agents.messages.create(
-			agent_id=agent_id,
-			messages=[MessageCreate(role="user", content=message_content)],
-			use_assistant_message=config["MemGPTUseAssistantMessage"]
-		)
+    try:
+        response = await client.agents.messages.create(
+            agent_id=agent_id,
+            messages=[MessageCreate(role="user", content=message_content)],
+            use_assistant_message=config["MemGPTUseAssistantMessage"]
+        )
 
-		logging.debug(f"MemGPT raw response: {response}")
+        logging.debug(f"MemGPT raw response: {response}")
 
-		if response and hasattr(response, 'messages') and isinstance(response.messages, list):
-			return_message = ""
-			reasoning = ""
-			for msg in response.messages:
-				if hasattr(msg, 'reasoning') and msg.reasoning:
-					logging.info(f"Agent reasoning: {msg.reasoning}")
-					reasoning += msg.reasoning + "\n"  # Accumulate reasoning
+        if response and hasattr(response, 'messages') and isinstance(response.messages, list):
+            return_message = ""
+            reasoning = ""
+            for msg in response.messages:
+                if hasattr(msg, 'reasoning') and msg.reasoning:
+                    logging.info(f"Agent reasoning: {msg.reasoning}")
+                    reasoning += msg.reasoning + "\n"  # Accumulate reasoning
 
-				if hasattr(msg, 'message_type') and msg.message_type == 'assistant_message':
-					if hasattr(msg, "function_call") and msg.function_call:
-						try:
-							arguments = json.loads(msg.function_call.arguments or '{}')
-							if msg.function_call.name == "send_message":
-								return_message = arguments.get('message', '')
-								break  # Exit loop after getting the message
-							else:
-								logging.info(f"Function Call with name {msg.function_call.name} was not send_message.")
-						except json.JSONDecodeError:
-							logging.error("Failed to decode tool call arguments from MemGPT")
-							break
-					elif hasattr(msg, 'content') and msg.content:
-						return_message = msg.content
-						break  # Exit loop after getting the content
-					else:
-						logging.info("Message type is assistant_message, but no content or function call was found.")
+                if hasattr(msg, 'message_type') and msg.message_type == 'assistant_message':
+                    if hasattr(msg, "function_call") and msg.function_call:
+                        try:
+                            arguments = json.loads(msg.function_call.arguments or '{}')
+                            if msg.function_call.name == "send_message":
+                                return_message = arguments.get('message', '')
+                                break  # Exit loop after getting the message
+                            else:
+                                logging.info(f"Function Call with name {msg.function_call.name} was not send_message.")
+                        except json.JSONDecodeError:
+                            logging.error("Failed to decode tool call arguments from MemGPT")
+                            break
+                    elif hasattr(msg, 'content') and msg.content:
+                        return_message = msg.content
+                        break  # Exit loop after getting the content
+                    else:
+                        logging.info("Message type is assistant_message, but no content or function call was found.")
 
-				elif hasattr(msg, "tool_call") and msg.tool_call:
-					try:
-						arguments = json.loads(msg.tool_call.arguments)
-						return_message = arguments.get('message', '')
-						break  # Exit loop after getting the message
-					except json.JSONDecodeError:
-						logging.error("Failed to decode tool call arguments from MemGPT")
-						break
-				elif hasattr(msg, "status") and msg.status:
-					logging.info(f"Tool response information: {msg.status}")
+                elif hasattr(msg, "tool_call") and msg.tool_call:
+                    try:
+                        arguments = json.loads(msg.tool_call.arguments)
+                        return_message = arguments.get('message', '')
+                        break  # Exit loop after getting the message
+                    except json.JSONDecodeError:
+                        logging.error("Failed to decode tool call arguments from MemGPT")
+                        break
+                elif hasattr(msg, "status") and msg.status:
+                    logging.info(f"Tool response information: {msg.status}")
 
-			return f"{reasoning.strip()}\n\n{return_message}" # Return reasoning and message
+            if return_message:
+                return return_message 
+            else:
+                return reasoning.strip() # Return reasoning and message
 
-		else:
-			logging.error(f"Unexpected response format from MemGPT: {response}")
-	except Exception as e:
-		logging.error(f"MemGPT API request failed: {e}")
-		raise Exception(f"MemGPT API request failed: {e}")
-	
+        else:
+            logging.error(f"Unexpected response format from MemGPT: {response}")
+    except Exception as e:
+        logging.error(f"MemGPT API request failed: {e}")
+        raise Exception(f"MemGPT API request failed: {e}")
+
 async def load_model(config, message):
 	async with message.channel.typing():
 		sd_model = message.content
