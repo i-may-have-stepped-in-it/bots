@@ -1,3 +1,5 @@
+llvmlite
+numba
 openai
 Pillow
 requests
@@ -29,3 +31,4 @@ imageio-ffmpeg
 docker
 letta-client
 requests
+yt-dlp

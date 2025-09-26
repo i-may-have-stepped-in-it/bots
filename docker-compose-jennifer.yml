@@ -46,13 +46,15 @@ services:
           devices:
             - driver: nvidia
               count: all
+              # device_ids: ['1','2']
               capabilities: [compute, utility]
     image: lunamidori5/midori_ai_subsystem_localai_nvidia_gpu:master
     pull_policy: always # always pull the latest
     profiles: [nvidia,""]
     tty: true # enable colorized logs
     restart: always # should this be on-failure ?
-    network_mode: host
+    # network_mode: host
+    privileged: true
     ports:
       - 38078:38078
     env_file:
@@ -62,6 +64,7 @@ services:
       - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/:rshared
       - /var/lib/docker/volumes/midoriai_midori-ai-audio/_data:/tmp/generated/audio/:rshared
       - ./.env:/build/.env
+      
     command: [ local-ai ]
 
   jennifer-text-backend-intel:
@@ -75,7 +78,7 @@ services:
     ports:
       - 38078:38078
     privileged: true
-    network_mode: host
+    # network_mode: host
     env_file:
       - intel.env
     volumes:
@@ -86,6 +89,7 @@ services:
     command: [ "local-ai" ]
   stable-diffusion-jennifer: &automatic
     container_name: stable-diffusion-jennifer
+    build: ../services/AUTOMATIC1111
     image: idacat411/stable-diffusion:latest
     restart: unless-stopped
     tty: true
@@ -98,11 +102,14 @@ services:
       - &v2 ../output:/output
     stop_signal: SIGKILL
     profiles: ["",intel,nvidia]
+    # network_mode: host
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
+              count: all
+              # device_ids: ['1','2']
               capabilities: [compute, utility]
   download:
     build: ../services/download/

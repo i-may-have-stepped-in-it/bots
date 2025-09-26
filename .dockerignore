@@ -1,5 +1,4 @@
-**/__pycache__
-**/.venv
+
 **/.classpath
 **/.dockerignore
 **/.env
@@ -31,3 +30,14 @@ README.md
 ./.cache*
 ./.vscode-server*
 **./nltk*
+**/__pycache__
+**/.venv
+hfcache/
+nltk_data/
+letta/
+vllm/
+*.log
+*.json
+*.yml
+*.yaml
+*.md
