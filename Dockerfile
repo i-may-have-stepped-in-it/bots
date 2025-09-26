@@ -24,8 +24,8 @@ WORKDIR /app
 
 COPY requirements.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install --no-cache-dir -r requirements.txt
-RUN pip install git+https://github.com/Rapptz/discord.py
+    uv pip install --system --no-cache-dir -r requirements.txt
+RUN uv pip install --system git+https://github.com/Rapptz/discord.py
 
 COPY ./utils/discord-ext-voice-recv /app/utils/discord-ext-voice-recv
 COPY ./install_voice_recv.sh /app
