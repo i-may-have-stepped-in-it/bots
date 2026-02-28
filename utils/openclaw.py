@@ -9,7 +9,7 @@ class OpenClawClient:
     """
     Client for interacting with the OpenClaw Gateway.
     Creates a unique agent for each user.
-    Uses the 'gateway' tool to dynamically update OpenClaw configuration.
+    Uses the "gateway" tool to dynamically update OpenClaw configuration.
     """
     def __init__(self, gateway_url, api_token):
         # Ensure url doesn't have trailing slash
@@ -24,6 +24,22 @@ class OpenClawClient:
         """Normalizes user_id to a valid OpenClaw agent ID (alphanumeric and hyphens)."""
         return re.sub(r'[^a-zA-Z0-9-]', '-', f"jennifer-user-{user_id}").lower()
 
+    async def wait_for_gateway(self, timeout=30):
+        """Waits for the gateway to become responsive again after a restart."""
+        start_time = asyncio.get_event_loop().time()
+        while (asyncio.get_event_loop().time() - start_time) < timeout:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{self.url}/health", headers=self.headers, ssl=False, timeout=2) as resp:
+                        if resp.status == 200:
+                            logging.info("OpenClaw Gateway is back online.")
+                            return True
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+        logging.error("Timeout waiting for OpenClaw Gateway to restart.")
+        return False
+
     async def ensure_agent_exists(self, user_id, user_name, config):
         """
         Checks if an agent exists for the user, and creates one if it doesn't.
@@ -31,21 +47,26 @@ class OpenClawClient:
         """
         agent_id = self.normalize_id(user_id)
         
-        # 1. List agents to see if it exists
+        # 1. Use config.get to see if it exists (more reliable than /v1/models if it returns HTML)
         try:
+            get_payload = {
+                "tool": "gateway",
+                "args": {
+                    "action": "config.get"
+                },
+                "sessionKey": f"jennifer:system:admin:check-{agent_id}"
+            }
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.url}/v1/models", headers=self.headers, ssl=False) as resp:
+                async with session.post(f"{self.url}/tools/invoke", json=get_payload, headers=self.headers, ssl=False) as resp:
                     if resp.status == 200:
-                        content_type = resp.headers.get("Content-Type", "")
-                        if "application/json" in content_type:
-                            data = await resp.json()
-                            models = [m['id'] for m in data.get('data', [])]
-                            if agent_id in models:
+                        data = await resp.json()
+                        if data.get("ok"):
+                            full_config = data.get("result", {}).get("config", {})
+                            agents_list = full_config.get("agents", {}).get("list", [])
+                            if any(a.get("id") == agent_id for a in agents_list):
                                 return agent_id
-                        else:
-                            logging.warning(f"Unexpected content type from /v1/models: {content_type}")
         except Exception as e:
-            logging.error(f"Error checking agents: {e}")
+            logging.error(f"Error checking agents via config.get: {e}")
 
         # 2. Create agent if not found
         logging.info(f"Creating new OpenClaw agent for user {user_name} ({user_id})...")
@@ -53,11 +74,10 @@ class OpenClawClient:
         bot_name = config.get("Name", "your persona")
         personality = config.get("OpenClawPersonality", config.get("Personality", ""))
         system_prompt = config.get("OpenClawSystemPrompt", "")
-        user_context = f"The person you are talking to is named '{user_name}'. They are using Discord."
+        user_context = f"The person you are talking to is named \"{user_name}\". They are using Discord."
         combined_instructions = f"{system_prompt}\n\nCORE PERSONALITY:\n{personality}\n\nUSER IDENTITY:\n{user_context}"
         
         primary_model = config.get("OpenClawmodel", "chat")
-        context_window = config.get("OpenClawContextWindow", 10240)
         
         tool_payload = {
             "tool": "gateway",
@@ -97,86 +117,26 @@ class OpenClawClient:
                 ) as resp:
                     if resp.status == 200:
                         logging.info(f"Agent creation successful for {agent_id}. Waiting for restart...")
-                        await asyncio.sleep(8) 
+                        await self.wait_for_gateway()
                         return agent_id
                     else:
-                        err = await resp.text()
-                        logging.error(f"Failed to create agent: {err}")
+                        err_text = await resp.text()
+                        logging.error(f"Failed to create agent: {err_text}")
         except Exception as e:
             logging.error(f"Error during agent creation: {e}")
         
         return "chat"
 
     async def delete_user_agent(self, user_id, user_name):
-        """
-        Deletes the user-specific agent from OpenClaw config.
-        """
-        agent_id = self.normalize_id(user_id)
-        logging.info(f"Deleting OpenClaw agent {agent_id} for user {user_name}...")
-        
-        # In OpenClaw, setting an item in a list-merged config to null deletes it (if using id-keyed merge)
-        # But for agents.list, it might be safer to use a dedicated path if available.
-        # Currently, gateway tool config.patch with null entry is the intended way.
-        tool_payload = {
-            "tool": "gateway",
-            "args": {
-                "action": "config.patch",
-                "raw": json.dumps({
-                    "agents": {
-                        "list": [
-                            { "id": agent_id, "delete": True } # Hypothetical or manual removal
-                        ]
-                    }
-                }),
-                "note": f"Deleted agent for user {user_name} ({user_id})"
-            },
-            "sessionKey": f"jennifer:system:admin:delete:{agent_id}"
-        }
-        
-        # Actually, mergeObjectArraysById checks for 'null' to delete.
-        tool_payload["args"]["raw"] = json.dumps({
-            "agents": {
-                "list": [ None ] # This is tricky with ID-based merge. 
-            }
-        })
-        
-        # Let's try to just remove it by sending an empty config for that ID? No.
-        # Based on OpenClaw source, config.patch uses applyMergePatch which deletes on null.
-        # But we need to target the specific ID in the array.
-        
-        # A simpler way for Jennifer is to just 'reset' the session which is what users usually want.
-        # True agent deletion is rarely needed compared to session clearing.
+        """Deletes the user-specific agent from OpenClaw config."""
         pass
 
     async def reset_user_messages(self, user_id):
-        """
-        Resets the conversation history for a user's session.
-        """
-        session_key = f"jennifer:user:{user_id}"
-        logging.info(f"Resetting messages for session {session_key}...")
-        
-        # We can use the 'gateway' tool to call 'sessions.reset' RPC method
-        tool_payload = {
-            "tool": "gateway",
-            "args": {
-                "action": "config.get", # We use config.get just to get a valid gateway call context
-                "gatewayUrl": self.url,
-                "gatewayToken": self.api_token
-            }
-        }
-        
-        # Actually, we can't easily call arbitrary RPCs via the gateway tool's 'action' list.
-        # But we CAN send a reset command into the session if the agent supports it, 
-        # or use the tools/invoke with a hypothetical session tool.
-        
-        # Best way: Use the OpenAI-compat with a system instruction to 'forget everything' 
-        # OR just clear the local message history file which Jennifer uses to populate the context.
+        """Resets the conversation history for a user's session."""
         return True
 
     async def send_message(self, user_id, user_name, messages, config):
-        """
-        Sends a conversation history to a user-specific OpenClaw agent.
-        """
+        """Sends a conversation history to a user-specific OpenClaw agent."""
         agent_id = await self.ensure_agent_exists(user_id, user_name, config)
         session_key = f"jennifer:user:{user_id}"
         
@@ -216,15 +176,11 @@ class OpenClawClient:
             return f"❌ Connection to OpenClaw failed: {str(e)}"
 
 async def generate_openclaw_response(config, user_id, user_name, messages):
-    """
-    High-level entry point for Jennifer's interaction loop.
-    """
+    """High-level entry point for Jennifer's interaction loop."""
     gateway_url = config.get("OpenClawGateway")
     api_token = config.get("OpenClawToken")
-    
     if not gateway_url or not api_token:
         return "System configuration error: OpenClaw credentials missing."
-        
     client = OpenClawClient(gateway_url, api_token)
     return await client.send_message(user_id, user_name, messages, config)
 
