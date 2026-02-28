@@ -12,7 +12,7 @@ import aiohttp
 from discord.ext.voice_recv.extras import *
 import os
 import aiofiles
-from letta_client import AsyncLetta, MessageCreate, TerminalToolRule
+from openclaw import generate_openclaw_response
 
 discord.opus._load_default()
 
@@ -20,16 +20,16 @@ discord.opus._load_default()
 async def generate_response(config, user_id, discord_username, user_message_histories, message=None, additional_instructions=None, prompt=None):
 	try:
 		client = None
-		response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=False, use_memgpt=True)
+		response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=False, use_openclaw=True)
 		if response:
 			return response
 	except Exception as e:
-		logging.error(f"An error occurred during MemGPT API call: {str(e)}")
+		logging.error(f"An error occurred during OpenClaw API call: {str(e)}")
 
 	if config.get("OpenAPIEndpoint") and config["OpenAPIEndpoint"].lower() != "disabled" and config.get("OpenAPIKey"):
 		try:
 			client = AsyncOpenAI(base_url=config["OpenAPIEndpoint"], api_key=config["OpenAPIKey"])
-			response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=True, use_memgpt=False)
+			response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=True, use_openclaw=False)
 			if response:
 				return response
 		except Exception as e:
@@ -38,7 +38,7 @@ async def generate_response(config, user_id, discord_username, user_message_hist
 	if config.get("SecondaryOpenAPIEndpoint") and config["SecondaryOpenAPIEndpoint"].lower != "disabled" and config.get("SecondaryOpenAPIKey"):
 		try:
 			client = AsyncOpenAI(base_url=config["SecondaryOpenAPIEndpoint"], api_key=config["SecondaryOpenAPIKey"])
-			response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=False, use_memgpt=False)
+			response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=False, use_openclaw=False)
 			if response:
 				return response
 		except Exception as e:
@@ -46,42 +46,55 @@ async def generate_response(config, user_id, discord_username, user_message_hist
 	
 	if message:
 		await message.channel.send("I can't talk right now please try back later.")
-	raise
+	return None
 
 
-async def try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid, use_memgpt):
+async def try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid, use_openclaw):
 		try:
-			recent_message_content = ""
 			user_id_str = str(user_id)
-			if user_id_str in user_message_histories and user_message_histories[user_id_str]:
-				recent_message_content = user_message_histories[user_id_str][-2]['content'] if len(user_message_histories[user_id_str]) > 1 else ""
-			logging.debug(f"Recent message content: {recent_message_content}")
-
 			messages = []
 
-			if not (use_memgpt or prompt):
+			# Retrieve history for the user
+			history = user_message_histories.get(user_id_str, [])
+			
+			if not (use_openclaw or prompt):
 				personality_command = f"You are {config['Personality']}."
 				messages.append({'role': 'system', 'content': personality_command})
 				logging.info("Included personality message.")
 
-			if not use_memgpt and recent_message_content and (message is None or recent_message_content != message.content) and prompt is None:
-				messages.append({'role': 'user', 'content': recent_message_content})
-				logging.info("Included recent user message.")
+			# Include historical messages with timestamps
+			if prompt is None:
+				# Add historical messages with timestamps
+				for entry in history[:-1]: # All but the last one
+					entry_role = entry.get('role', 'user')
+					entry_content = entry.get('content', '')
+					entry_timestamp = entry.get('timestamp', '')
+					
+					formatted_content = f"[{entry_timestamp}] {entry_content}" if entry_timestamp else entry_content
+					messages.append({'role': entry_role, 'content': formatted_content})
+				logging.info(f"Included {len(history)-1} historical messages.")
 
-			if message and isinstance(message.content, str) and prompt is None:
-				messages.append({'role': 'user', 'content': message.content})
-				logging.info("Included message content from provided message.")
-
-			if isinstance(prompt, str) and prompt:  #Simplified condition
+			# Current message or prompt
+			if isinstance(prompt, str) and prompt:
 				logging.info("Using provided prompt:")
 				logging.debug(prompt)
 				messages.append({'role': 'user', 'content': prompt})
+			elif message and isinstance(message.content, str):
+				# Get timestamp for current message if it exists in history
+				current_timestamp = ""
+				if history:
+					current_timestamp = history[-1].get('timestamp', '')
+				
+				content = message.content
+				formatted_content = f"[{current_timestamp}] {content}" if current_timestamp else content
+				messages.append({'role': 'user', 'content': formatted_content})
+				logging.info("Included current message with timestamp.")
 
-			logging.info(f"Sending data to {'MemGPT' if use_memgpt else 'OpenAI'}: {messages}")
-			if use_memgpt:		
-				response = await send_request_to_memgpt(config, messages, user_id, discord_username, message)
+			logging.info(f"Sending data to {'OpenClaw' if use_openclaw else 'OpenAI'}: {messages}")
+			if use_openclaw:		
+				response = await generate_openclaw_response(config, user_id, discord_username, messages)
 				if response:
-					logging.info(f"MemGPT Response: {response}")
+					logging.info(f"OpenClaw Response: {response}")
 					if isinstance(response, str):
 						response = "".join(response)
 
@@ -91,7 +104,7 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 						else:
 							return [response]
 					else:
-						logging.warning("MemGPT did not return a response.")
+						logging.warning("OpenClaw did not return a response.")
 					return None
 			else:
 				if openai_valid:
