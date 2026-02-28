@@ -36,10 +36,14 @@ class OpenClawClient:
             async with aiohttp.ClientSession() as session:
                 async with session.get(f"{self.url}/v1/models", headers=self.headers, ssl=False) as resp:
                     if resp.status == 200:
-                        data = await resp.json()
-                        models = [m['id'] for m in data.get('data', [])]
-                        if agent_id in models:
-                            return agent_id
+                        content_type = resp.headers.get("Content-Type", "")
+                        if "application/json" in content_type:
+                            data = await resp.json()
+                            models = [m['id'] for m in data.get('data', [])]
+                            if agent_id in models:
+                                return agent_id
+                        else:
+                            logging.warning(f"Unexpected content type from /v1/models: {content_type}")
         except Exception as e:
             logging.error(f"Error checking agents: {e}")
 
