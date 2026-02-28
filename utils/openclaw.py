@@ -69,7 +69,6 @@ class OpenClawClient:
                             {
                                 "id": agent_id,
                                 "name": f"{bot_name} ({user_name})",
-                                "onboarding": "completed",
                                 "model": {
                                     "primary": primary_model
                                 },
@@ -77,9 +76,6 @@ class OpenClawClient:
                                     "name": bot_name,
                                     "theme": combined_instructions,
                                     "emoji": "🫦"
-                                },
-                                "params": {
-                                    "maxContextTokens": context_window
                                 }
                             }
                         ]
