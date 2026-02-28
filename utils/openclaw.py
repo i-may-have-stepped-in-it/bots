@@ -65,8 +65,8 @@ class OpenClawClient:
                 "action": "config.patch",
                 "raw": json.dumps({
                     "agents": {
-                        "entries": {
-                            agent_id: {
+                        "list": [
+                            {
                                 "id": agent_id,
                                 "name": f"{bot_name} ({user_name})",
                                 "onboarding": "completed",
@@ -79,13 +79,10 @@ class OpenClawClient:
                                     "emoji": "🫦"
                                 },
                                 "params": {
-                                    "maxContextTokens": context_window,
-                                    "compaction": {
-                                        "mode": "safeguard"
-                                    }
+                                    "maxContextTokens": context_window
                                 }
                             }
-                        }
+                        ]
                     }
                 }),
                 "note": f"Created user agent for {user_name} ({user_id})"
