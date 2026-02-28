@@ -20,6 +20,7 @@ services:
     build:
       context: .
       # no_cache: true
+    network_mode: host
     profiles: ["",nvidia,intel]
     logging:
       driver: json-file
@@ -48,7 +49,7 @@ services:
               count: all
               # device_ids: ['1','2']
               capabilities: [compute, utility]
-    image: lunamidori5/midori_ai_subsystem_localai_nvidia_gpu:master
+    image: localai/localai:latest-aio-gpu-nvidia-cuda-13
     pull_policy: always # always pull the latest
     profiles: [nvidia,""]
     tty: true # enable colorized logs
@@ -94,7 +95,7 @@ services:
     restart: unless-stopped
     tty: true
     environment:
-      - CLI_ARGS= --allow-code --enable-insecure-extension-access --api --opt-split-attention --xformers
+      - CLI_ARGS= --allow-code --enable-insecure-extension-access --api --xformers
     ports:
       - "${WEBUI_PORT:-7860}:7860"
     volumes:
@@ -116,22 +117,6 @@ services:
     profiles: ["download",""]
     volumes:
       - *v1
-  letta:
-   extends:
-     file: ./letta/docker-compose.yaml
-     service: letta_server
-     pull_policy: always
-     profiles: ["",nvidia,intel]
-     environment:
-      ./letta/.env
-  letta_db:
-    extends:
-     file: ./letta/docker-compose.yaml
-     service: letta_db
-     pull_policy: always
-     profiles: ["",nvidia,intel]
-     environment:
-      ./letta/.env
   vllm:
     image: idacat411/vllm-xpu:latest
     container_name: vllm
