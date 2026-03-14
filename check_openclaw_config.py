@@ -5,6 +5,15 @@ import uuid
 import sys
 import os
 
+CONFIG_PATH = os.environ.get("JENNIFER_CONFIG", "/app/config/config.json")
+
+def load_token():
+    try:
+        with open(CONFIG_PATH) as f:
+            return json.load(f).get("OpenClawToken")
+    except FileNotFoundError:
+        return None
+
 async def call_rpc(ws_url, api_token, method, params):
     async with aiohttp.ClientSession() as session:
         try:
@@ -61,9 +70,9 @@ async def call_rpc(ws_url, api_token, method, params):
 async def main():
     gateway_url = "https://vmi3115281.tail36566.ts.net/"
     ws_url = "wss://vmi3115281.tail36566.ts.net/"
-    api_token = os.environ.get("OPENCLAW_TOKEN")
+    api_token = load_token()
     if not api_token:
-        print("Error: OPENCLAW_TOKEN environment variable not set")
+        print(f"Error: OpenClawToken not found in {CONFIG_PATH}")
         sys.exit(1)
     
     print("Fetching Gateway config...")
