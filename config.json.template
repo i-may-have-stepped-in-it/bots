@@ -24,7 +24,11 @@
     "OpenaiTTSVoiceModel": "",
     "OpenaiTTSBackend": "bark",
     "SileroSpeaker": "en_107",
-    "SDURL": "",
+    "SDBackend": "automatic1111",
+    "_comment_sdbackend": "Image generation backend: automatic1111, comfyui, or invokeai",
+    "SDURL": "http://josh-asus-1.tail36566.ts.net:7860",
+    "SDComfyURL": "http://josh-asus-1.tail36566.ts.net:8188",
+    "SDInvokeURL": "http://josh-asus-1.tail36566.ts.net:9090",
     "SDPositivePrompt": "((best quality)), ((masterpiece)), (detailed), RAW photo, 8k uhd, Best quality,  ultra high resolution, hyper realistic, exquisite, intricate, aesthetic, beautiful, volumetric lighting, film grain, Fujifilm XT3, analog style,",
     "SDNegativePrompt": "CyberRealistic_Negative-neg",
     "SDSteps": 20,
@@ -41,6 +45,8 @@
     "Appearance": "",
     "OpenClawGateway": "",
     "OpenClawToken": "",
+    "OpenClawDeviceToken": "",
+    "OpenClawDeviceIdentityPath": "",
     "OpenClawAgent": "",
     "OpenClawmodel": "",
     "OpenClawBearer": "",
@@ -104,5 +110,37 @@
         "description_angle_of_view": "You can specify the viewing angle of the image.",
         "title_final_prompt": "Final Prompt",
         "description_final_prompt": "Combine the text description, parameters, weights, and the additional elements (image style, subject, environment, lighting, angle of view) to create the final prompt. Return only the final prompt as a single line."
+    },
+    "_comment_video": "Video Generation Configuration - Supports Z.AI API (cloud) or FramePack (local)",
+    "VideoBackend": "zai",
+    "VideoRateLimit": 3,
+    "VideoMaxPromptLength": 500,
+    "_comment_zai": "Z.AI API Settings - Get API key from https://z.ai",
+    "ZaiAPIKey": "",
+    "ZaiAPIEndpoint": "https://api.z.ai/api/paas/v4",
+    "ZaiVideoModel": "CogVideoX-3",
+    "ZaiVideoResolution": "720p",
+    "ZaiVideoDuration": 5,
+    "_comment_framepack": "FramePack Local Settings - For self-hosted video generation",
+    "FramePackURL": "http://localhost:7860",
+    "FramePackModel": "FramePack (Original)",
+    "FramePackSteps": 25,
+    "FramePackWidth": 640,
+    "FramePackHeight": 480,
+    "FramePackVideoLength": 4.0,
+    "FramePackUseTeaCache": true,
+    "_comment_model_router": "Model routing configuration - defines models for different tiers",
+    "model_router": {
+        "highspeed_model": "zai/glm-4.7-flash",
+        "highspeed_fallbacks": [],
+        "intelligence_model": "moonshot/kimi-k2.5",
+        "intelligence_fallbacks": [
+            "zai/glm-4.7-flash"
+        ],
+        "uncensored_model": "venice/venice-uncensored-role-play",
+        "uncensored_fallbacks": [
+            "venice/olafangensan-glm-4.7-flash-heretic",
+            "localai/Qwen3-14B-Nexa-Uncensored"
+        ]
     }
 }

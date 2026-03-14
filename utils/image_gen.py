@@ -7,33 +7,38 @@ import discord
 import aiohttp
 import base64
 import time
-from utility_functions import *
+import threading
+import copy
+from utils.utility_functions import *
+from utils.model_router import detect_uncensored_content
 from PIL import Image
+from utils.ssl_config import SSLConfigManager
+from integrations.image_generation import create_adapter_from_config, PromptFormatter, ComfyUIAdapter, InvokeAIAdapter
+from core.tracing import get_tracer, SpanStatus
 
-# Token Bucket class for rate limiting
-class TokenBucket:
-	def __init__(self, capacity, refill_rate):
-		self.capacity = capacity
-		self.tokens = capacity
-		self.last_refill_time = time.time()
-		self.refill_rate = refill_rate
+tracer = get_tracer()
 
-	def consume(self, tokens):
-		current_time = time.time()
-		self.tokens = min(self.capacity, self.tokens + (current_time - self.last_refill_time) * self.refill_rate)
-		self.last_refill_time = current_time
+# Shared token bucket for rate limiting (module-level singleton)
+_image_rate_limiter = None
+_image_rate_limiter_lock = threading.Lock()
 
-		if tokens <= self.tokens:
-			self.tokens -= tokens
-			return True
-		else:
-			return False
+def get_image_rate_limiter():
+	"""Get or create the shared TokenBucket for image generation."""
+	global _image_rate_limiter
+	if _image_rate_limiter is None:
+		with _image_rate_limiter_lock:
+			if _image_rate_limiter is None:
+				_image_rate_limiter = TokenBucket(capacity=3, refill_rate=0.5)
+	return _image_rate_limiter
+
+# Import shared rate limiter
+from utils.rate_limiter import TokenBucket
 
 
 async def handle_image_generation(config, message, user_message_histories, bot, draw_msg):
 	try:
 		
-		bucket = TokenBucket(capacity=3, refill_rate=0.5)
+		bucket = get_image_rate_limiter()
 		channel = message.channel
 		async with channel.typing():
 			if bucket.consume(1):
@@ -63,6 +68,7 @@ async def handle_image_generation(config, message, user_message_histories, bot, 
 				else:
 					await draw_msg.edit("Failed to fetch the model. Please try again later.")
 					logging.error("Failed to fetch the model. Skipping image generation.")
+				logging.info(f"Remaining tokens after consumption: {bucket.tokens}")
 			else:
 				await draw_msg.edit("I'm busy sketching for you. Please wait until I finish this one before asking for another.")
 				logging.info("Image drawing throttled. Skipping draw request")
@@ -117,12 +123,30 @@ def parse_prompt(prompt, bot_name, config):
 
 async def generate_openai_response(config, user_id, user_message_histories, message, prompt, upscale, additional_instructions):
 	try:
+		# Check if prompt contains NSFW content
+		prompt_text = str(prompt) if prompt else ""
+		is_nsfw = detect_uncensored_content(prompt_text)
+		
+		if is_nsfw:
+			logging.info("NSFW content detected in image prompt, using uncensored model for SD prompt generation")
+			# Create a copy of config to avoid modifying the original
+			config_copy = copy.deepcopy(config)
+			# Get uncensored model from config or use default
+			router_config = config.get("model_router", {})
+			uncensored_model = router_config.get("uncensored_model", "venice/venice-uncensored-role-play")
+			# Force use of uncensored model for SD prompt generation
+			config_copy["OpenClawmodel"] = uncensored_model
+			config_copy["OpenClawAgent"] = ""  # Use default agent
+			config_copy["_nsfw_mode"] = True  # Signal to system prompt builder
+			use_config = config_copy
+		else:
+			use_config = config
 		
 		# Construct the message for generate_response
 		message_dict = {'role': 'user', 'content': message.content} if message else None  # Create the message dictionary
 		
 		# Generate response using OpenAI API with additional instructions
-		response = await generate_response(config, user_id, message.author.display_name, user_message_histories, message,additional_instructions=additional_instructions, prompt=prompt)
+		response = await generate_response(use_config, user_id, message.author.display_name, user_message_histories, message,additional_instructions=additional_instructions, prompt=prompt)
 		logging.info("OpenAI response generated successfully in generate_openai_response.")
 		logging.debug(response)
 		
@@ -181,104 +205,404 @@ async def send_image_response(message, image, openai_response, draw_msg, prompt=
 		logging.error("An error occurred during sending image response in send_image_response: " + str(e))
 		raise  # Re-raise the exception to propagate it back
 
+
 # Generate image using Stable Diffusion API
 async def stable_diffusion_generate_image(config, prompt, upscale):
+	"""
+	Generate image using the configured backend with tracing.
+	
+	Supports Automatic1111, ComfyUI, and InvokeAI backends.
+	"""
+	span_id = tracer.start_span("sd_generate_image", "image_gen", 
+	                            attributes={"backend": config.get("SDBackend", "unknown"), 
+	                                       "upscale": upscale})
+	
 	try:
-		json_payload = prepare_json_payload(config, prompt, upscale)
-		logging.info(json.dumps(json_payload))
-		if json_payload:
-			logging.info(f"JSON Payload complete, Making API Call.")
-			response = await make_api_call(config, json_payload)
+		tracer.add_event("creating_adapter")
+		adapter = create_adapter_from_config(config)
+		tracer.add_attribute("actual_backend", adapter.name)
+		
+		formatter = PromptFormatter(adapter)
+		
+		tracer.add_event("formatting_prompt")
+		json_payload = formatter.format_prompt(prompt, upscale=upscale)
+		
+		if not json_payload:
+			raise ValueError("Failed to prepare JSON payload")
+		
+		tracer.add_event("sending_request", {"backend": adapter.name})
+		logging.info(f"JSON Payload complete, Making API Call to {adapter.name} backend.")
+		
+		# Handle different backend types
+		if isinstance(adapter, ComfyUIAdapter):
+			tracer.add_event("using_comfyui_workflow")
+			image = await _generate_image_comfyui(adapter, config, json_payload)
+		elif isinstance(adapter, InvokeAIAdapter):
+			tracer.add_event("using_invokeai")
+			image = await _generate_image_invokeai(adapter, config, json_payload)
+		else:
+			tracer.add_event("using_automatic1111")
+			response = await _make_api_call_automatic1111(adapter, config, json_payload)
 			if response:
-				return process_response(response)
-		# If any step fails, raise an exception to indicate image generation failure
-		raise ValueError("Failed to generate image in stable_diffusion_generate_image.")
+				image = adapter.process_response(response)
+			else:
+				raise ValueError("Failed to get response from API")
+		
+		if image is None:
+			raise ValueError("Failed to generate image")
+		
+		tracer.add_event("image_generated", {"size": image.size if image else None})
+		tracer.end_span(span_id, SpanStatus.SUCCESS)
+		return image
+		
 	except Exception as e:
+		tracer.add_event("generation_error", {"error": str(e)})
+		tracer.end_span(span_id, SpanStatus.ERROR, str(e))
 		logging.error("An error occurred during image generation in stable_diffusion_generate_image: " + str(e))
-		raise  # Re-raise the exception to propagate it back to the caller
+		raise
 
-async def fetch_options(config):
+
+async def _make_api_call_automatic1111(adapter, config, json_payload):
+	"""
+	Make API call for Automatic1111-style backends.
+	
+	Args:
+		adapter: The image generation adapter
+		config: Configuration dictionary
+		json_payload: The payload to send
+		
+	Returns:
+		API response dictionary or None on error
+	"""
 	try:
 		async with aiohttp.ClientSession() as session:
-			url = config["SDURL"] + "/sdapi/v1/options"
-			async with session.get(url) as response:
+			url = adapter.get_generation_endpoint()
+			ssl_context = SSLConfigManager.get_ssl_context(url)
+			
+			logging.info(f"Sending request to {url}")
+			async with session.post(url=url, json=json_payload, ssl=ssl_context, timeout=aiohttp.ClientTimeout(total=300)) as response:
+				response.raise_for_status()
+				return await response.json()
+					
+	except aiohttp.ClientError as e:
+		logging.error(f"HTTP error occurred: {e}")
+		return None
+	except asyncio.TimeoutError:
+		logging.error("Timeout waiting for image generation")
+		return None
+	except Exception as e:
+		logging.error(f"An error occurred: {e}")
+		return None
+
+
+async def _generate_image_comfyui(adapter, config, json_payload):
+	"""
+	Generate image using ComfyUI's async workflow system with tracing.
+	"""
+	span_id = tracer.start_span("comfyui_generate", "comfyui",
+	                            attributes={"base_url": adapter.get_base_url()})
+	
+	import aiohttp
+	
+	base_url = adapter.get_base_url()
+	ssl_context = SSLConfigManager.get_ssl_context(base_url)
+	
+	try:
+		async with aiohttp.ClientSession() as session:
+			# Step 1: Queue the prompt
+			prompt_url = adapter.get_generation_endpoint()
+			tracer.add_event("queueing_prompt", {"url": prompt_url})
+			logging.info(f"Queueing ComfyUI workflow at {prompt_url}")
+			
+			async with session.post(prompt_url, json=json_payload, ssl=ssl_context) as response:
+				response.raise_for_status()
+				queue_response = await response.json()
+				
+			prompt_id = queue_response.get("prompt_id")
+			if not prompt_id:
+				raise ValueError("No prompt_id returned from ComfyUI")
+			
+			tracer.add_attribute("prompt_id", prompt_id)
+			tracer.add_event("prompt_queued", {"prompt_id": prompt_id})
+			logging.info(f"ComfyUI workflow queued with prompt_id: {prompt_id}")
+			
+			# Step 2: Poll for completion
+			history_url = adapter.get_history_endpoint(prompt_id)
+			tracer.add_event("polling_for_completion", {"max_attempts": 300})
+			
+			poll_span = tracer.start_span("comfyui_poll", "comfyui", parent_id=span_id)
+			max_attempts = 300
+			
+			for attempt in range(max_attempts):
+				await asyncio.sleep(1)
+				
+				async with session.get(history_url, ssl=ssl_context) as response:
+					if response.status == 200:
+						history = await response.json()
+						
+						if prompt_id in history:
+							tracer.add_event("workflow_completed", {"attempts": attempt + 1})
+							logging.info(f"ComfyUI workflow completed after {attempt + 1} seconds")
+							result = history[prompt_id]
+							break
+			else:
+				tracer.end_span(poll_span, SpanStatus.ERROR, "Timeout")
+				raise TimeoutError("ComfyUI workflow timed out")
+			
+			tracer.end_span(poll_span)
+			
+			# Step 3: Extract and fetch the image
+			fetch_span = tracer.start_span("comfyui_fetch_image", "comfyui", parent_id=span_id)
+			
+			outputs = result.get("outputs", {})
+			if not outputs:
+				raise ValueError("No outputs in ComfyUI result")
+			
+			# Find the saved image node
+			image_filename = None
+			image_subfolder = ""
+			
+			for node_id, node_output in outputs.items():
+				if "images" in node_output:
+					for image_info in node_output["images"]:
+						image_filename = image_info.get("filename")
+						image_subfolder = image_info.get("subfolder", "")
+						break
+					if image_filename:
+						break
+			
+			if not image_filename:
+				raise ValueError("No image found in ComfyUI outputs")
+			
+			tracer.add_attribute("image_filename", image_filename)
+			
+			# Step 4: Fetch the image
+			image_url = adapter.get_image_endpoint(image_filename, image_subfolder)
+			logging.info(f"Fetching ComfyUI result image from {image_url}")
+			
+			async with session.get(image_url, ssl=ssl_context) as response:
+				response.raise_for_status()
+				image_data = await response.read()
+				image = Image.open(io.BytesIO(image_data))
+				
+			tracer.add_event("image_fetched", {"size_bytes": len(image_data)})
+			tracer.end_span(fetch_span)
+			tracer.end_span(span_id, SpanStatus.SUCCESS)
+			
+			return image
+			
+	except Exception as e:
+		tracer.add_event("comfyui_error", {"error": str(e)})
+		tracer.end_span(span_id, SpanStatus.ERROR, str(e))
+		raise
+
+
+async def _generate_image_invokeai(adapter, config, json_payload):
+	"""
+	Generate image using InvokeAI API.
+	
+	InvokeAI can work in two modes:
+	1. Direct generation via /api/v1/images/generate
+	2. Session-based generation for more complex workflows
+	
+	This function uses the direct generation approach.
+	
+	Args:
+		adapter: InvokeAIAdapter instance
+		config: Configuration dictionary
+		json_payload: Generation payload
+		
+	Returns:
+		PIL Image object
+	"""
+	try:
+		# Use the standard API call
+		response = await _make_api_call_automatic1111(adapter, config, json_payload)
+		
+		if not response:
+			raise ValueError("No response from InvokeAI API")
+		
+		# Process the response
+		return adapter.process_response(response)
+		
+	except Exception as e:
+		logging.error(f"InvokeAI generation failed: {e}")
+		raise
+
+
+async def make_api_call_with_adapter(adapter, config, json_payload):
+	"""
+	Make API call using the adapter's endpoint configuration.
+	
+	Args:
+		adapter: The image generation adapter
+		config: Configuration dictionary
+		json_payload: The payload to send
+		
+	Returns:
+		API response dictionary or None on error
+	"""
+	try:
+		async with aiohttp.ClientSession() as session:
+			url = adapter.get_generation_endpoint()
+			ssl_context = SSLConfigManager.get_ssl_context(url)
+			
+			async with session.post(url=url, json=json_payload, ssl=ssl_context) as response:
+				response.raise_for_status()
+				return await response.json()
+	except aiohttp.ClientError as e:
+		logging.error(f"HTTP error occurred: {e}")
+		return None
+	except Exception as e:
+		logging.error(f"An error occurred: {e}")
+		return None
+
+
+async def fetch_options(config):
+	"""
+	Fetch options from the configured backend.
+	
+	Args:
+		config: Configuration dictionary
+		
+	Returns:
+		Options dictionary from the backend
+	"""
+	try:
+		adapter = create_adapter_from_config(config)
+		
+		async with aiohttp.ClientSession() as session:
+			url = adapter.get_options_endpoint()
+			ssl_context = SSLConfigManager.get_ssl_context(url)
+			async with session.get(url, ssl=ssl_context) as response:
 				response.raise_for_status()
 				options = await response.json()
-				logging.info("Options fetched successfully in fetch_options.")
+				logging.info(f"Options fetched successfully from {adapter.name} backend.")
 				return options
 	except aiohttp.ClientError as e:
-		# Log the error and raise it
 		logging.error(f"HTTP error occurred: {e}, url={url}")
 		raise
 	except Exception as e:
-		# Log the error and raise it
-		logging.error(f"An error occurred while fetching options from the Stable Diffusion API in fetch_options: {e}")
+		logging.error(f"An error occurred while fetching options: {e}")
 		raise
 
-async def check_current_model(config, message,draw_msg):
+
+async def check_current_model(config, message, draw_msg):
+	"""
+	Check the current model and switch if necessary.
+	
+	Args:
+		config: Configuration dictionary
+		message: Discord message object
+		draw_msg: Message to edit for status updates
+		
+	Returns:
+		Tuple of (current_model, configured_model) or None on error
+	"""
 	try:
+		adapter = create_adapter_from_config(config)
+		
+		# Skip model checking for backends that don't have global model state
+		if isinstance(adapter, ComfyUIAdapter):
+			logging.info("ComfyUI backend detected - skipping global model check (model specified per-workflow)")
+			configured_model = config.get("SDmodel")
+			return configured_model, configured_model
+		
 		options = await fetch_options(config)
-		# logging.debug("Received options from the API in check_current_model: %s", options)
-		# Check if the 'sd_model_checkpoint' key exists in the options
-		if 'sd_model_checkpoint' in options:
-			sd_model_checkpoint = options['sd_model_checkpoint']
-			configured_model_checkpoint = config["SDmodel"]
-			if sd_model_checkpoint != configured_model_checkpoint:
-				logging.warning("Loaded model does not match configured model in check_current_model.")
-				if message:
-					logging.warning("Sending message to notify about model mismatch in check_current_model...")
-					if isinstance(message.channel, discord.DMChannel):
-						await draw_msg.edit(content=draw_msg.content + "\n" + "Please wait, switching models...")
-					else:
-						await draw_msg.edit(content=draw_msg.content + "\n" + "It may take me a bit of time to do that. Please be patient")
-				# Construct the JSON payload for the POST request
-				json_payload = {
-					"sd_model_checkpoint": configured_model_checkpoint
-				}
-				# Send the POST request to load the model
-				async with aiohttp.ClientSession() as session:
-					async with session.post(url=config["SDURL"] + "/sdapi/v1/options", json=json_payload) as response:
-						response.raise_for_status()
-						logging.info("Model loaded successfully in check_current_model.")
-			else:
-				logging.info("Loaded model matches configured model in check_current_model.")
-			return sd_model_checkpoint, configured_model_checkpoint
+		
+		# Use adapter to parse current model
+		sd_model_checkpoint = adapter.parse_current_model(options)
+		configured_model_checkpoint = config.get("SDmodel")
+		
+		if sd_model_checkpoint is None:
+			logging.warning("Could not parse current model from options")
+			# Return configured model to allow generation to proceed
+			return configured_model_checkpoint, configured_model_checkpoint
+		
+		if sd_model_checkpoint != configured_model_checkpoint:
+			logging.warning("Loaded model does not match configured model.")
+			if message:
+				logging.warning("Sending message to notify about model mismatch...")
+				if isinstance(message.channel, discord.DMChannel):
+					await draw_msg.edit(content=draw_msg.content + "\n" + "Please wait, switching models...")
+				else:
+					await draw_msg.edit(content=draw_msg.content + "\n" + "It may take me a bit of time to do that. Please be patient")
+			
+			# Create model switch payload using adapter
+			json_payload = adapter.create_model_switch_payload(configured_model_checkpoint)
+			
+			# Skip if adapter returns empty payload (backend doesn't support model switching)
+			if not json_payload:
+				logging.info(f"{adapter.name} backend does not support global model switching")
+				return configured_model_checkpoint, configured_model_checkpoint
+			
+			# Send the POST request to load the model
+			async with aiohttp.ClientSession() as session:
+				ssl_context = SSLConfigManager.get_ssl_context(adapter.get_base_url())
+				async with session.post(
+					url=adapter.get_options_endpoint(), 
+					json=json_payload, 
+					timeout=aiohttp.ClientTimeout(total=120),
+					ssl=ssl_context
+				) as response:
+					response.raise_for_status()
+					logging.info(f"Model loaded successfully on {adapter.name} backend.")
 		else:
-			error_message = "No 'sd_model_checkpoint' key found in API options."
-			logging.error(error_message)
-			raise RuntimeError(error_message)
+			logging.info("Loaded model matches configured model.")
+		
+		return sd_model_checkpoint, configured_model_checkpoint
+			
 	except Exception as e:
 		logging.error(f"An error occurred in check_current_model: {e}")
-		raise e
+		# Return configured model to allow generation to proceed despite error
+		configured_model = config.get("SDmodel")
+		return configured_model, configured_model
+
 
 async def check_models(config):
+	"""
+	Check available models from the configured backend.
+	
+	Args:
+		config: Configuration dictionary
+		
+	Returns:
+		List of available model names
+	"""
+	adapter = create_adapter_from_config(config)
+	
 	async def fetch_models():
-		async with aiohttp.ClientSession() as session1:
-			# Refresh checkpoints
-			url1 = config["SDURL"] + "/sdapi/v1/refresh-checkpoints"
-			async with session1.post(url1) as response1:
-				response1.raise_for_status()
-				status1 = await response1.text()
-				logging.info("Refreshed checkpoints")
-
+		async with aiohttp.ClientSession() as session:
+			# Refresh checkpoints if supported
+			refresh_url = adapter.get_refresh_models_endpoint()
+			if refresh_url:
+				try:
+					ssl_context = SSLConfigManager.get_ssl_context(refresh_url)
+					async with session.post(refresh_url, ssl=ssl_context) as response:
+						response.raise_for_status()
+						logging.info("Refreshed checkpoints")
+				except Exception as e:
+					logging.warning(f"Could not refresh checkpoints: {e}")
+			
 			# Fetch models
-		async with aiohttp.ClientSession() as session2:
-			url2 = config["SDURL"] + "/sdapi/v1/sd-models"
-			async with session2.get(url2) as response2:
-				response2.raise_for_status()
-				available_models_data = await response2.json()
-				logging.info("Models fetched successfully in fetch_models.")
+			url = adapter.get_models_endpoint()
+			ssl_context = SSLConfigManager.get_ssl_context(url)
+			async with session.get(url, ssl=ssl_context) as response:
+				response.raise_for_status()
+				available_models_data = await response.json()
+				logging.info("Models fetched successfully.")
 				return available_models_data
 
 	try:
 		available_models_data = await fetch_models()
-		available_models = [model['model_name'] for model in available_models_data]
-		logging.info("Options fetched successfully in fetch_options.")
+		# Use adapter to parse models list
+		available_models = adapter.parse_models_list(available_models_data)
 		return available_models
 	except Exception as e:
 		error_message = f"An error occurred while checking available models: {str(e)}"
 		logging.error(error_message)
 		raise RuntimeError(error_message) from e
+
 
 async def print_available_models(config,message):
 	available_models = await check_models(config)
@@ -288,61 +612,102 @@ async def print_available_models(config,message):
 	else:
 		await message.channel.send("Sorry there are no models available.")
 
+
+# Legacy function - kept for backward compatibility
+# Use PromptFormatter.format_prompt() instead for new code
 def prepare_json_payload(config, prompt, upscale):
+	"""
+	Prepare JSON payload for image generation (legacy function).
+	
+	This function is kept for backward compatibility.
+	New code should use PromptFormatter.format_prompt() instead.
+	
+	Args:
+		config: Configuration dictionary
+		prompt: The image generation prompt
+		upscale: Whether to enable upscaling
+		
+	Returns:
+		Dictionary containing the API payload
+	"""
 	try:
-		json_payload = {
-			"prompt": config.get("SDPositivePrompt") + (prompt if isinstance(prompt, str) else " ".join(prompt)),
-			"steps": config.get("SDSteps"),
-			"width": config.get("SDWidth"),
-			"height": config.get("SDHeight"),
-			"negative_prompt": config.get("SDNegativePrompt"),
-			"sampler_index": config.get("SDSampler"),
-			"scheduler": config.get("SDScheduler"),
-			"cfg_scale": config.get("SDConfig"),
-			"self_attention": "yes",
-			"enable_hr": upscale,
-			"hr_upscaler": "R-ESRGAN 4x+",
-			"hr_prompt": config.get("SDPositivePrompt") + (prompt if isinstance(prompt, str) else " ".join(prompt)),
-			"hr_negative_prompt": config.get("SDNegativePrompt"),
-			"denoising_strength": 0.5,
-			"override_settings_restore_afterwards": False,
-			"override_settings": {
-				"sd_model_checkpoint": config.get("SDmodel"),
-				"CLIP_stop_at_last_layers": config.get("SDClipSkip")
-			}
-		}
-		logging.info("JSON payload prepared successfully in prepare_json_payload.")
-		logging.debug(f"{json_payload}")
-		return json_payload
+		from integrations.image_generation import create_adapter_from_config, PromptFormatter
+		
+		adapter = create_adapter_from_config(config)
+		formatter = PromptFormatter(adapter)
+		
+		return formatter.format_prompt(prompt, upscale=upscale)
 	except Exception as e:
 		error_message = f"An error occurred while preparing JSON payload: {str(e)}"
 		logging.error(error_message)
 		raise RuntimeError(error_message) from e
 
+
+# Legacy function - kept for backward compatibility
+# Use make_api_call_with_adapter() instead for new code
 async def make_api_call(config, json_payload):
+	"""
+	Make API call to generate image (legacy function).
+	
+	This function is kept for backward compatibility.
+	New code should use make_api_call_with_adapter() instead.
+	
+	Args:
+		config: Configuration dictionary
+		json_payload: The payload to send
+		
+	Returns:
+		API response dictionary or None on error
+	"""
 	try:
-		async with aiohttp.ClientSession() as session:
-			async with session.post(url=config["SDURL"] + "/sdapi/v1/txt2img", json=json_payload) as response:
-				response.raise_for_status()  # Raise an exception for HTTP errors (status codes 4xx and 5xx)
-				return await response.json()
-	except aiohttp.ClientError as e:
-		# Log the error or handle it appropriately
-		logging.error(f"HTTP error occurred: {e}")
-		return None
+		adapter = create_adapter_from_config(config)
+		return await make_api_call_with_adapter(adapter, config, json_payload)
 	except Exception as e:
-		# Handle other exceptions
-		logging.error(f"An error occurred: {e}")
+		logging.error(f"An error occurred in make_api_call: {e}")
 		return None
 
-def process_response(response):
+
+def process_response(response, adapter=None):
+	"""
+	Process API response and extract image.
+	
+	Args:
+		response: API response dictionary
+		adapter: Optional adapter instance. If not provided, attempts
+			to auto-detect the response format.
+		
+	Returns:
+		PIL Image object or None on error
+	"""
 	try:
-		image_data = base64.b64decode(response['images'][0])
-		image = Image.open(io.BytesIO(image_data))
-		logging.debug("Image generated successfully in process_response.")
-		return image
+		# If adapter is provided, use its process_response method
+		if adapter is not None:
+			return adapter.process_response(response)
+		
+		# Try to auto-detect the response format
+		if "images" in response and isinstance(response["images"], list):
+			# Automatic1111 or InvokeAI format with base64 images
+			image_data = base64.b64decode(response["images"][0])
+			image = Image.open(io.BytesIO(image_data))
+			logging.debug("Image processed successfully (base64 format).")
+			return image
+		elif "prompt_id" in response:
+			# ComfyUI format - requires separate image fetching
+			logging.warning("ComfyUI response detected but separate image fetching required. Use _generate_image_comfyui().")
+			return None
+		elif "image" in response:
+			# Direct base64 image
+			image_data = base64.b64decode(response["image"])
+			image = Image.open(io.BytesIO(image_data))
+			logging.debug("Image processed successfully (direct base64 format).")
+			return image
+		else:
+			logging.error(f"Unknown response format: {response.keys()}")
+			return None
 	except Exception as e:
 		logging.error("An error occurred while processing API response in process_response: " + str(e))
 		return None
+
 
 # Check if image is generated
 def image_generated(image):

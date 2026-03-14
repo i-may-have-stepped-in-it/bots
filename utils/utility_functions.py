@@ -9,10 +9,9 @@ import sys
 import discord
 import json
 import aiohttp
-from discord.ext.voice_recv.extras import *
 import os
 import aiofiles
-from openclaw import generate_openclaw_response
+from utils.openclaw import generate_openclaw_response
 
 discord.opus._load_default()
 
@@ -35,7 +34,7 @@ async def generate_response(config, user_id, discord_username, user_message_hist
 		except Exception as e:
 			logging.error(f"An error occurred during OpenAI API call: {str(e)}")
 	
-	if config.get("SecondaryOpenAPIEndpoint") and config["SecondaryOpenAPIEndpoint"].lower != "disabled" and config.get("SecondaryOpenAPIKey"):
+	if config.get("SecondaryOpenAPIEndpoint") and config["SecondaryOpenAPIEndpoint"].lower() != "disabled" and config.get("SecondaryOpenAPIKey"):
 		try:
 			client = AsyncOpenAI(base_url=config["SecondaryOpenAPIEndpoint"], api_key=config["SecondaryOpenAPIKey"])
 			response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=False, use_openclaw=False)
@@ -455,7 +454,7 @@ async def load_model(config, message):
 async def txt2vid(config,message,bot_name):
 	if message.content.startswith("txt2vid"):
 		prompt = message.content.replace("txt2vid", "").strip()
-		prompt = prompt.content.replace(bot_name,  "").strip()
+		prompt = prompt.replace(bot_name,  "").strip()
 	else:
 		prompt = None
 
@@ -474,5 +473,4 @@ async def txt2vid(config,message,bot_name):
 
 			image_url = response_data["candidates"][0]["url"]
 			logging.info(f"Generated image URL: {image_url}")
-			await message.channel.send(image_url)
 			await message.channel.send(image_url)
