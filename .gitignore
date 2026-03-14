@@ -23,3 +23,10 @@ intel.env
 # Runtime secrets and local data
 config/
 data/
+
+# Identity and key material
+*device-identity*
+*-identity.json
+*.pem
+*_private_key*
+*privatekey*
