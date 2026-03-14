@@ -1,16 +1,10 @@
-from functools import cache
-from http import client
-from venv import create
-from openai import AsyncOpenAI
 import logging
 import asyncio
-from io import BytesIO
-import sys
 import discord
 import json
 import aiohttp
 import os
-import aiofiles
+from openai import AsyncOpenAI
 from utils.openclaw import generate_openclaw_response
 
 discord.opus._load_default()
@@ -33,7 +27,7 @@ async def generate_response(config, user_id, discord_username, user_message_hist
 				return response
 		except Exception as e:
 			logging.error(f"An error occurred during OpenAI API call: {str(e)}")
-	
+
 	if config.get("SecondaryOpenAPIEndpoint") and config["SecondaryOpenAPIEndpoint"].lower() != "disabled" and config.get("SecondaryOpenAPIKey"):
 		try:
 			client = AsyncOpenAI(base_url=config["SecondaryOpenAPIEndpoint"], api_key=config["SecondaryOpenAPIKey"])
@@ -42,7 +36,7 @@ async def generate_response(config, user_id, discord_username, user_message_hist
 				return response
 		except Exception as e:
 				logging.error(f"An error occurred during second OpenAI API call: {str(e)}")
-	
+
 	if message:
 		await message.channel.send("I can't talk right now please try back later.")
 	return None
@@ -55,7 +49,7 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 
 			# Retrieve history for the user
 			history = user_message_histories.get(user_id_str, [])
-			
+
 			if not (use_openclaw or prompt):
 				personality_command = f"You are {config['Personality']}."
 				messages.append({'role': 'system', 'content': personality_command})
@@ -68,7 +62,7 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 					entry_role = entry.get('role', 'user')
 					entry_content = entry.get('content', '')
 					entry_timestamp = entry.get('timestamp', '')
-					
+
 					formatted_content = f"[{entry_timestamp}] {entry_content}" if entry_timestamp else entry_content
 					messages.append({'role': entry_role, 'content': formatted_content})
 				logging.info(f"Included {len(history)-1} historical messages.")
@@ -83,14 +77,14 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 				current_timestamp = ""
 				if history:
 					current_timestamp = history[-1].get('timestamp', '')
-				
+
 				content = message.content
 				formatted_content = f"[{current_timestamp}] {content}" if current_timestamp else content
 				messages.append({'role': 'user', 'content': formatted_content})
 				logging.info("Included current message with timestamp.")
 
 			logging.info(f"Sending data to {'OpenClaw' if use_openclaw else 'OpenAI'}: {messages}")
-			if use_openclaw:		
+			if use_openclaw:
 				response = await generate_openclaw_response(config, user_id, discord_username, messages)
 				if response:
 					logging.info(f"OpenClaw Response: {response}")
@@ -103,7 +97,7 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 						else:
 							return [response]
 					else:
-						logging.warning("OpenClaw did not return a response.")
+						logging.warning("OpenClaw did not return a string response.")
 					return None
 			else:
 				if openai_valid:
@@ -128,349 +122,3 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 		except Exception as e:
 			logging.error("An error occurred during API call in try_generate_response: " + str(e), exc_info=True)
 			raise
-
-USER_DATA_FILE = "/app/config/memgpt_user_data.json"
-
-if os.path.exists(USER_DATA_FILE):
-	with open(USER_DATA_FILE, "r") as f:
-		discord_to_memgpt_user = json.load(f)
-else:
-	discord_to_memgpt_user = {}
-
-async def get_or_create_memgpt_agent(config, user_id, discord_username, message):
-	user_data = await load_user_data()
-	discord_user_id = str(user_id)
-
-	if discord_user_id in user_data:
-		return user_data[discord_user_id]  # Correctly returns the user's data
-
-	lettaclient = AsyncLetta(base_url=config["MemGPTEndpoint"])
-
-
-	# def generate_image_with_sd(prompt: str) -> str:
-	# 	"""
-	# 	Generates an image using a remote Stable Diffusion API.  Synchronous version.
-
-	# 	Retrieves Stable Diffusion parameters from environment variables.  These
-	# 	environment variables should be set by the calling agent.
-
-	# 	Args:
-	# 		prompt (str): The text prompt to be appended to the base
-	# 					positive prompt configured for the tool.
-
-	# 	Returns:
-	# 		str: A base64 encoded string of the generated image.
-	# 			Returns an error message string if image generation fails
-	# 			or if the API returns an unexpected response.
-
-	# 	Environment Variables:
-	# 		SD_API_URL: The URL of the Stable Diffusion API.
-	# 		SD_POSITIVE_PROMPT: The base positive prompt.
-	# 		SD_NEGATIVE_PROMPT: The negative prompt.
-	# 		SD_STEPS: The number of steps for image generation.
-	# 		SD_WIDTH: The width of the generated image.
-	# 		SD_HEIGHT: The height of the generated image.
-	# 		SD_SAMPLER: The sampler to use.
-	# 		SD_SCHEDULER: The scheduler to use.
-	# 		SD_CFG_SCALE: The Classifier-Free Guidance scale.
-	# 		SD_MODEL: The Stable Diffusion model checkpoint to use.
-	# 		SD_CLIP_SKIP: The number of CLIP layers to skip.
-
-	# 	Raises:
-	# 		requests.exceptions.RequestException: If there's an error communicating with the
-	# 							Stable Diffusion API.
-	# 		KeyError, IndexError: If the API response is in an unexpected format.
-	# 	"""
-	# 	import os
-	# 	import requests
-	# 	import base64
-
-	# 	sd_api_url = os.environ.get("SD_API_URL") + "/sdapi/v1/txt2img"
-
-	# 	positive_prompt = os.environ.get("SD_POSITIVE_PROMPT")
-	# 	negative_prompt = os.environ.get("SD_NEGATIVE_PROMPT")
-	# 	sampler = os.environ.get("SD_SAMPLER")
-	# 	scheduler = os.environ.get("SD_SCHEDULER")
-	# 	sd_model = os.environ.get("SD_MODEL")
-
-
-	# 	json_payload = {
-	# 		"prompt": positive_prompt + prompt,
-	# 		"negative_prompt": negative_prompt,
-	# 		"sampler_index": sampler,
-	# 		"scheduler": scheduler,
-	# 		"override_settings": {
-	# 			"sd_model_checkpoint": sd_model,
-	# 		}
-	# 	}
-
-	# 	try:
-	# 		response = requests.post(sd_api_url, json=json_payload)
-
-	# 		if response.status_code != 200:
-	# 			return f"Error: API returned status code {response.status_code}"
-
-	# 		try:
-	# 			response_data = response.json()
-	# 			image_data = response_data["images"][0]
-	# 			# Decode the base64 string *without* removing the header.  The API *should* be returning just the base64, but we account for the header.
-	# 			# image_base64 = image_data.replace("data:image/png;base64,", "") #original
-	# 			return image_data
-	# 		except (KeyError, IndexError) as e:
-	# 			print(f"Unexpected response: {e}")
-	# 			return "Error: Unexpected response from API"
-
-	# 	except requests.exceptions.RequestException as e:
-	# 		print(f"Error communicating with Stable Diffusion API: {e}")
-	# 		return f"Error: {e}"
-	# from letta_client import Letta
-	# letta_client = Letta(base_url=config["MemGPTEndpoint"])
-	# sd_tool = letta_client.tools.create_from_function(
-	# 	func=generate_image_with_sd,
-	# )
-
-	# print(f"Created tool {sd_tool.name}")
-
-	async def create_memgpt_agent(discord_username, message):
-		agent_data = {
-			"memory_blocks": [
-				{"label": "human", "value": f"The user's name is {discord_username}.\nThey have not provided any other information about themselves. \nI will need to ask them some questions to gather information."},
-				{"label": "persona", "value": config["MemGPTPersonality"]}
-			],
-			"system": config["MemGPTSystemPrompt"],
-			"llm_config": {
-				"model": config["MemGPTmodel"],
-				"context_window": config["MemGPTContextWindow"],
-				"model_endpoint_type": config["MemGPTModelEndpointType"],
-				"model_endpoint": config["MemGPTModelEndpoint"]
-			},
-			"embedding_config": {
-				"embedding_model": config["MemGPTEmbedding"],
-				"embedding_dim": config["MemGPTEmbeddingDim"],
-				"embedding_endpoint_type": config["MemGPTEmbeddingEndpointType"],
-				"embedding_endpoint": config["MemGPTEmbeddingEndpoint"]
-			},
-			# "tool_ids": [sd_tool.id],  # Add the Stable Diffusion tool ID
-			# "tool_exec_environment_variables": {  # Add environment variables for the tool
-			# 	"SD_API_URL": str(config.get("SDURL")), # Get from config
-			#     "SD_POSITIVE_PROMPT": str(config.get("SDPositivePrompt")),
-			#     "SD_NEGATIVE_PROMPT": str(config.get("SDNegativePrompt")),
-			#     "SD_SAMPLER": str(config.get("SDSampler")),
-			#     "SD_SCHEDULER": str(config.get("SDScheduler")),
-			#     "SD_MODEL": str(config.get("SDmodel")),
-
-			# },
-		}
-		try:
-			response = await lettaclient.agents.create(**agent_data)
-			agent_id = response.id
-			agent_name = response.name
-			logging.debug(f"MemGPT Agent Created with ID: {agent_id}")
-			logging.info(f"Agent Name: {agent_name}")
-			return agent_id, agent_name
-		except Exception as e:
-			logging.error(f"MemGPT agent creation failed: {e}")
-			raise Exception(f"Failed to create MemGPT agent: {e}")
-
-	memgpt_agent_id, memgpt_agent_name = await create_memgpt_agent(discord_username, message)
-
-	user_data[discord_user_id] = {'agent_id': memgpt_agent_id, 'agent_name': memgpt_agent_name}
-	logging.info(f"Storing agent ID: {memgpt_agent_id} for user {discord_user_id}")
-	logging.info(f"Storing agent name: {memgpt_agent_name}")
-	await save_user_data(user_data)
-
-	return user_data[discord_user_id]  # Return only the user's data
-
-async def save_user_data(user_data):
-	logging.info(f"Saving user data: {user_data}")  # Log the data being saved
-
-	def dump_json_to_file(data, filename):
-		with open(filename, 'w') as sync_f:
-			json.dump(data, sync_f, indent=4)
-			sync_f.write('\n')
-
-	await asyncio.to_thread(dump_json_to_file, user_data, USER_DATA_FILE)
-	logging.info("Saved User Config")
-
-USER_DATA_FILE = "/app/config/memgpt_user_data.json"
-
-async def load_user_data():
-	try:
-		async with aiofiles.open(USER_DATA_FILE, "r") as f:
-			contents = await f.read()
-			try:
-				return json.loads(contents)
-			except json.JSONDecodeError:
-				return {}  # Return empty dict if file is empty or corrupted
-	except FileNotFoundError:
-		return {}  # Return empty dict if file doesn't exist
-
-
-
-async def delete_agent_and_user_data(config, message, load_msg):
-	client = AsyncLetta(base_url=config["MemGPTEndpoint"], token=config["MemGPTBearer"])
-	logging.info("Deleting agent and user data")
-
-	user_id = str(message.author.id)
-	user_data = await load_user_data()
-
-	if user_id in user_data:
-		agent_id = user_data[user_id].get('agent_id')
-		if agent_id:
-			try:
-				await client.agents.delete(agent_id=agent_id)
-				logging.info(f"Deleted agent {agent_id}")
-			except Exception as e:
-				logging.error(f"Error deleting agent {agent_id}: {e}")
-
-			del user_data[user_id]  # Remove user from dictionary
-			await save_user_data(user_data) # Save updated dictionary
-			await load_msg.edit(content=load_msg.content + "\n" + "Agent data removed successfully.")
-		else:
-			logging.warning(f"No agent ID found for user ID: {user_id}")
-	else:
-		logging.warning(f"No data found for user ID: {user_id}")
-
-
-async def reset_messages(config, message) -> None:
-	"""
-	Resets the messages for a given agent.
-
-	Args:
-		user_id (int): The ID of the user to reset messages for.
-		token (str): The bearer token for the MemGPT API.
-	"""
-	user_id=message.author.id
-	async with aiofiles.open(USER_DATA_FILE, "r") as f:
-		user_data = json.loads(await f.read())
-
-	# Access the agent_id using the user_id
-	# Assuming that user_id is the outer key in the JSON
-	agent_id = user_data.get(str(user_id), {}).get('agent_id')
-
-	# Check if agent_id was found
-	if agent_id:
-		logging.info(f"Agent ID: {agent_id}")
-	else:
-		logging.warning(f"No agent ID found for user ID: {user_id}")
-
-	url = f"{config['MemGPTEndpoint']}/v1/agents/{agent_id}/reset-messages?add_default_initial_messages=true"
-	headers = {"Authorization": f"Bearer {config['MemGPTBearer']}"}
-
-	async with aiohttp.ClientSession() as session:
-		async with session.patch(url, headers=headers) as response:
-			response.raise_for_status()
-
-async def send_request_to_memgpt(config, messages, user_id, discord_username, message):
-    memgpt_agent_data = await get_or_create_memgpt_agent(config, user_id, discord_username, message)
-    agent_id = memgpt_agent_data['agent_id']
-    client = AsyncLetta(base_url=config["MemGPTEndpoint"], timeout=config["MemGPTtimeout"])
-    message_content = messages[0]['content']
-
-    try:
-        response = await client.agents.messages.create(
-            agent_id=agent_id,
-            messages=[MessageCreate(role="user", content=message_content)],
-            use_assistant_message=config["MemGPTUseAssistantMessage"]
-        )
-
-        logging.debug(f"MemGPT raw response: {response}")
-
-        if response and hasattr(response, 'messages') and isinstance(response.messages, list):
-            return_message = ""
-            reasoning = ""
-            for msg in response.messages:
-                if hasattr(msg, 'reasoning') and msg.reasoning:
-                    logging.info(f"Agent reasoning: {msg.reasoning}")
-                    reasoning += msg.reasoning + "\n"  # Accumulate reasoning
-
-                if hasattr(msg, 'message_type') and msg.message_type == 'assistant_message':
-                    if hasattr(msg, "function_call") and msg.function_call:
-                        try:
-                            arguments = json.loads(msg.function_call.arguments or '{}')
-                            if msg.function_call.name == "send_message":
-                                return_message = arguments.get('message', '')
-                                break  # Exit loop after getting the message
-                            else:
-                                logging.info(f"Function Call with name {msg.function_call.name} was not send_message.")
-                        except json.JSONDecodeError:
-                            logging.error("Failed to decode tool call arguments from MemGPT")
-                            break
-                    elif hasattr(msg, 'content') and msg.content:
-                        return_message = msg.content
-                        break  # Exit loop after getting the content
-                    else:
-                        logging.info("Message type is assistant_message, but no content or function call was found.")
-
-                elif hasattr(msg, "tool_call") and msg.tool_call:
-                    try:
-                        arguments = json.loads(msg.tool_call.arguments)
-                        return_message = arguments.get('message', '')
-                        break  # Exit loop after getting the message
-                    except json.JSONDecodeError:
-                        logging.error("Failed to decode tool call arguments from MemGPT")
-                        break
-                elif hasattr(msg, "status") and msg.status:
-                    logging.info(f"Tool response information: {msg.status}")
-
-            if return_message:
-                return return_message 
-            else:
-                return reasoning.strip() # Return reasoning and message
-
-        else:
-            logging.error(f"Unexpected response format from MemGPT: {response}")
-    except Exception as e:
-        logging.error(f"MemGPT API request failed: {e}")
-        raise Exception(f"MemGPT API request failed: {e}")
-
-async def load_model(config, message):
-	async with message.channel.typing():
-		sd_model = message.content
-		async with aiohttp.ClientSession() as session1:
-			url1 = config["SDURL"] + "/sdapi/v1/refresh-checkpoints"
-			async with session1.post(url1) as response1:
-				response1.raise_for_status()
-				status1 = await response1.text()
-				logging.info("Refreshed checkpoints")
-
-		json_payload = {
-			"sd_model_checkpoint": sd_model.replace("load model ", "")
-		}
-		async with aiohttp.ClientSession()  as session:
-			async with session.post(url=config["SDURL"] + "/sdapi/v1/options", json=json_payload) as response:
-				response.raise_for_status()
-
-		with open("config/config.json", "r") as f:
-			config = json.load(f)
-
-		config["SDmodel"] = sd_model.replace("load model ", "")
-
-		with open("config/config.json", "w") as f:
-			json.dump(config, f, indent=4)
-			f.flush()
-		logging.info ("Model loaded.")
-
-async def txt2vid(config,message,bot_name):
-	if message.content.startswith("txt2vid"):
-		prompt = message.content.replace("txt2vid", "").strip()
-		prompt = prompt.replace(bot_name,  "").strip()
-	else:
-		prompt = None
-
-	size = "512x512"
-
-	data = {
-		"prompt": prompt,
-		"size": size,
-		"model": "txt2vid",
-	}
-
-	async with aiohttp.ClientSession() as session:
-		async with session.post(config["SecondaryOpenAPIEndpoint"] + "/images/generations", json=data) as response:
-			response.raise_for_status()
-			response_data = await response.json()
-
-			image_url = response_data["candidates"][0]["url"]
-			logging.info(f"Generated image URL: {image_url}")
-			await message.channel.send(image_url)

@@ -427,21 +427,6 @@ class JenniferConfig(BaseModel):
             "FramePackUseTeaCache": "video.framepack_use_teacache",
             "VideoRateLimit": "video.rate_limit_per_minute",
             "VideoMaxPromptLength": "video.max_prompt_length",
-            # MemGPT/Letta aliases (for backward compatibility)
-            "MemGPTEndpoint": "openclaw.gateway",
-            "MemGPTBearer": "openclaw.bearer",
-            "MemGPTmodel": "openclaw.model",
-            "MemGPTPersonality": "openclaw.personality",
-            "MemGPTSystemPrompt": "openclaw.system_prompt",
-            "MemGPTContextWindow": "openclaw.context_window",
-            "MemGPTtimeout": "openclaw.timeout",
-            "MemGPTUseAssistantMessage": "openclaw.use_assistant_message",
-            "MemGPTEmbedding": "openclaw.embedding",
-            "MemGPTEmbeddingDim": "openclaw.embedding_dim",
-            "MemGPTModelEndpointType": "openclaw.model_endpoint_type",
-            "MemGPTModelEndpoint": "openclaw.model_endpoint",
-            "MemGPTEmbeddingEndpointType": "openclaw.embedding_endpoint_type",
-            "MemGPTEmbeddingEndpoint": "openclaw.embedding_endpoint",
         }
         
         if key in key_map:

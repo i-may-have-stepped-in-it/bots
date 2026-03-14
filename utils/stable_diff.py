@@ -192,17 +192,3 @@ async def _generate_invokeai(adapter, json_payload):
             return adapter.process_response(response_data)
 
 
-# For compatibility with letta tool creation
-try:
-    from letta import client as letta_client
-    
-    sd_tool = letta_client.tools.create_from_function(
-        func=generate_image_with_sd,
-    )
-    print(f"Created tool {sd_tool.name}")
-except ImportError:
-    logging.debug("Letta client not available, skipping tool creation")
-    sd_tool = None
-except Exception as e:
-    logging.warning(f"Could not create letta tool: {e}")
-    sd_tool = None
