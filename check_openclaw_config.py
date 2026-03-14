@@ -3,6 +3,7 @@ import aiohttp
 import json
 import uuid
 import sys
+import os
 
 async def call_rpc(ws_url, api_token, method, params):
     async with aiohttp.ClientSession() as session:
@@ -60,7 +61,10 @@ async def call_rpc(ws_url, api_token, method, params):
 async def main():
     gateway_url = "https://vmi3115281.tail36566.ts.net/"
     ws_url = "wss://vmi3115281.tail36566.ts.net/"
-    api_token = "ba7d617b7592038244f1991c7a659c17781af9573a4ff521"
+    api_token = os.environ.get("OPENCLAW_TOKEN")
+    if not api_token:
+        print("Error: OPENCLAW_TOKEN environment variable not set")
+        sys.exit(1)
     
     print("Fetching Gateway config...")
     res = await call_rpc(ws_url, api_token, "config.get", {})
