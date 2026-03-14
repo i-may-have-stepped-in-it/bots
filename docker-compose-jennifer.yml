@@ -30,6 +30,8 @@ services:
     volumes:
       - ./config/:/app/config/
       - ./nltk_data:/home/appuser/nltk_data
+    environment:
+      - TQDM_DISABLE=1
     tty: true # enable colorized logs
     restart: always
     deploy:
@@ -52,6 +54,8 @@ services:
     image: localai/localai:latest-aio-gpu-nvidia-cuda-13
     pull_policy: always # always pull the latest
     profiles: [nvidia,""]
+    environment:
+      - TQDM_DISABLE=1
     tty: true # enable colorized logs
     restart: always # should this be on-failure ?
     # network_mode: host
@@ -73,6 +77,8 @@ services:
     devices:
       - /dev/dri:/dev/dri
     image: lunamidori5/midori_ai_subsystem_localai_intelf16_gpu:master
+    environment:
+      - TQDM_DISABLE=1
     tty: true # enable colorized logs
     restart: always # should this be on-failure ?
     profiles: ["intel",""]
@@ -153,6 +159,8 @@ services:
   jennifer-text-backend-cpu:
     deploy:
     image: lunamidori5/localai_cpu:master
+    environment:
+      - TQDM_DISABLE=1
     tty: true # enable colorized logs
     restart: always # should this be on-failure ?
     profiles: ["auto-cpu",""]

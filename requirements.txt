@@ -29,6 +29,4 @@ opencv-python
 imageio
 imageio-ffmpeg
 docker
-letta-client
-requests
 yt-dlp

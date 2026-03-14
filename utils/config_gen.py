@@ -21,6 +21,18 @@ def load_config(config_path):
 		logging.error("An error occurred while loading config: " + str(e))
 	return None
 
+def save_config(config_path, config):
+	try:
+		# Use a temporary file to avoid corruption
+		temp_path = config_path + ".tmp"
+		with open(temp_path, "w") as file:
+			json.dump(config, file, indent=4)
+		os.replace(temp_path, config_path)
+		return True
+	except Exception as e:
+		logging.error(f"An error occurred while saving config: {e}")
+		return False
+
 class ConfigFileHandler(FileSystemEventHandler):
     def __init__(self, config_dir, on_change):
         super().__init__()

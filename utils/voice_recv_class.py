@@ -3,8 +3,8 @@ import asyncio
 import torch
 import torchaudio
 import nltk
-nltk.download('punkt')
-nltk.download('punkt_tab')
+nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
 from nltk.tokenize import sent_tokenize
 import discord
 from discord.ext import voice_recv
@@ -30,13 +30,13 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 		silero_model, _ = torch.hub.load(repo_or_dir='snakers4/silero-models',
 								model='silero_tts',
 								language=language,
-								speaker=model_id
+								speaker=model_id,
+								trust_repo=True
 								)
 		silero_model.to(device)
 	except Exception as e:
 		print(f"Error loading Silero model: {e}")
 		silero_model = None
-
 	tts_queue = asyncio.Queue()
 	
 	def __init__(self, *args, **kwargs):
