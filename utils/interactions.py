@@ -10,7 +10,15 @@ def add_message_to_history(config, role, user_id, user_name, message_content, us
     try:
         if user_id not in user_message_histories:
             user_message_histories[user_id] = []
-        user_message_histories[user_id].append({'role': role, 'name': user_name, 'content': message_content})
+        
+        timestamp = datetime.now().isoformat()
+        user_message_histories[user_id].append({
+            'role': role, 
+            'name': user_name, 
+            'content': message_content,
+            'timestamp': timestamp
+        })
+        
         total_character_count = sum(len(entry['content']) for entry in user_message_histories.get(user_id, []) if entry is not None)
         while total_character_count > config["History_Length"]:
             oldest_entry = user_message_histories[user_id].pop(0)
@@ -42,6 +50,10 @@ async def handle_message_processing(config, message, user_message_histories, his
             openairesponse = ' '.join(openairesponse)
 
         if openairesponse:
+            # Add assistant response to history
+            bot_name = config.get("Name", "Jennifer")
+            add_message_to_history(config, 'assistant', bot_name, bot_name, openairesponse, user_message_histories, history_file_name)
+            
             chunks = split_into_chunks(openairesponse)
             for chunk in chunks:
                 if isinstance(message.channel, discord.Thread):

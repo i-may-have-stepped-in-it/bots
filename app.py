@@ -19,7 +19,7 @@ from utils.voice_recv_class import *
 from utils.utility_functions import *
 from utils.image_gen import handle_image_generation
 from utils.image_gen import print_available_models
-from utils.interactions import handle_message_processing
+from utils.interactions import handle_message_processing, save_message_histories
 from watchdog.observers.polling import PollingObserver
 from utils.config_gen import load_config, config_path, log_setup, handle_config_change, ConfigFileHandler
 import yt_dlp as youtube_dl
@@ -196,22 +196,23 @@ import re
 async def handle_command(message, config, user_message_histories, bot, history_file_name):
 	"""Handles commands starting with '!'."""
 	bot_name = config["Name"]
-	full_message = message.content.lower()  # Store the original message content
+	full_message = message.content  # Keep original case for arguments
 	interaction_timeout = config.get("InteractionTimeout", 60)  # Default timeout in seconds
 	user_id = message.author.id #Grab User ID
 
-	# Extract the command using regex
-	match = re.match(rf"^{re.escape(bot_name.lower())}[^\w\s]*\s*(!\S+.*)", full_message)
+	# Extract the command using regex or simple strip
+	match = re.match(rf"^{re.escape(bot_name)}[^\w\s]*\s*(!\S+.*)", full_message, re.IGNORECASE)
 	if match:
 		command = match.group(1).strip()  # Extract the command after the bot name
 	else:
-		command = full_message
+		command = full_message.strip()
+	
+	logging.info(f"Processing command: '{command}'")
+	command_lower = command.lower()
+
 	# Check if the bot should process the command (mention, active user, etc.)
 	is_triggered = bot_name.lower() in full_message.lower() or bot.user in message.mentions or user_id in active_users
 	is_active = user_id in active_users and (time.time() - active_users[user_id]) <= interaction_timeout
-	# if not (message.channel.type == discord.ChannelType.private or is_triggered or is_active):
-	#     message_queue.put_nowait(Task(config, message, user_message_histories, history_file_name, bot))
-	#     return #If not triggered or active, send to main queue
 
 	# Always update active_users upon receiving a command, if previously triggered
 	if is_triggered:
@@ -220,11 +221,11 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 	# Prioritize DM channels for command handling without checks
 	if message.channel.type == discord.ChannelType.private:
 		# Commands to execute in a DM channel
-		if command.startswith("!draw") or command.startswith("!send"):
+		if command_lower.startswith("!draw") or command_lower.startswith("!send"):
 			draw_msg = await message.channel.send("Hang on while I get that for you...")
 			image_queue.put_nowait(Draw_Task(config, message, user_message_histories, bot, draw_msg))
 			return
-		elif command.startswith("!txt2vid"):
+		elif command_lower.startswith("!txt2vid"):
 			if message.author.id in config["Power_Users"]:
 				draw_msg = await message.channel.send("Hang on while I get that for you...")
 				await txt2vid(config, draw_msg, config["Name"])
@@ -232,48 +233,103 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 			else:
 				await message.channel.send("I'm sorry, you do not have permission to run this command.")
 				return
-		elif command == "!check models":
+		elif command_lower == "!check models":
 			if message.author.id in config["Power_Users"]:
 				await print_available_models(config, message)
 				return
 			else:
 				await message.channel.send("I'm sorry, you do not have permission to run this command.")
 				return
-		elif command.startswith("!teamviewer"):
+		elif command_lower.startswith("!teamviewer"):
 			await print_available_models(config, message)
 			return
-		elif command.startswith("!load model"):
+		elif command_lower.startswith("!load model"):
 			if message.author.id in config["Power_Users"]:
 				try:
-					load_msg = await message.channel.send(f"Loading model {message.content[12:]}.")  # Corrected index
+					load_msg = await message.channel.send(f"Loading model {command[12:].strip()}.")  # Corrected index and use command
 					await load_model(config, message)
 					await load_msg.edit(content=load_msg.content + "\n" + "Model loaded successfully.")
 					return
-				except:
+				except Exception as e:
+					logging.error(f"Error loading model: {e}")
 					await load_msg.edit(content="I am sorry there is a problem with my camera.")
 					return
 			else:
 				await message.channel.send("I'm sorry, you do not have permission to run this command.")
 				return
-		elif command == "!recreate agent":
+		elif command_lower.startswith("!change model"):
+			model_name = command[13:].strip()
+			if model_name:
+				try:
+					from openclaw import change_openclaw_model
+					success = await change_openclaw_model(config, message.author.id, model_name)
+					if success:
+						config["OpenClawmodel"] = model_name
+						from utils.config_gen import save_config, config_path
+						save_config(config_path, config)
+						await message.channel.send(f"Model changed to {model_name} successfully. My brain is rebooting to apply changes...")
+					else:
+						await message.channel.send(f"Failed to change model to {model_name}.")
+					return
+				except Exception as e:
+					await message.channel.send(f"Error changing model: {e}")
+					return
+			else:
+				await message.channel.send("Please specify a model name.")
+				return
+		elif command_lower == "!new session":
+			try:
+				from openclaw import start_openclaw_new_session
+				success = await start_openclaw_new_session(config, message.author.id)
+				# Also clear local history
+				if str(message.author.id) in user_message_histories:
+					user_message_histories[str(message.author.id)] = []
+					save_message_histories(history_file_name, user_message_histories)
+				
+				if success:
+					await message.channel.send("New session started successfully.")
+				else:
+					await message.channel.send("Failed to start new session on Gateway, but local history cleared.")
+				return
+			except Exception as e:
+				logging.error(f"Error starting new session: {e}")
+				await message.channel.send(f"Error starting new session: {e}")
+				return
+		elif command_lower == "!recreate agent":
 			try:
 				load_msg = await message.channel.send("Recreating agent.")
-				await delete_agent_and_user_data(config, message, load_msg)
+				# Clear local history first
+				if str(message.author.id) in user_message_histories:
+					user_message_histories[str(message.author.id)] = []
+					save_message_histories(history_file_name, user_message_histories)
+				
+				from openclaw import delete_openclaw_agent
+				await delete_openclaw_agent(config, message.author.id, message.author.display_name)
+				
 				logging.info("Restarting process...")
 				os.execv(sys.executable, [sys.executable] + sys.argv)
 				return
-			except:
-				await load_msg.edit(content="I am sorry there is a problem recreating the agent.")
+			except Exception as e:
+				logging.exception(f"Error recreating agent: {e}")
+				await load_msg.edit(content=f"I am sorry there is a problem recreating the agent: {e}")
 				return
-		elif command == "!reset agent":
+		elif command_lower == "!reset agent":
 			try:
-				await reset_messages(config, message)
+				# Clear local history
+				if str(message.author.id) in user_message_histories:
+					user_message_histories[str(message.author.id)] = []
+					save_message_histories(history_file_name, user_message_histories)
+				
+				from openclaw import reset_openclaw_messages
+				await reset_openclaw_messages(config, message.author.id)
+				
 				await message.channel.send("Messages reset successfully.")
 				return
-			except:
+			except Exception as e:
+				logging.error(f"Error resetting agent: {e}")
 				await message.channel.send("I am sorry there is a problem with resetting the messages.")
 				return
-		elif command == "!join_vc":
+		elif command_lower == "!join_vc":
 			if message.author.voice:
 				try:
 					voice_channel_id = message.author.voice.channel.id
@@ -287,7 +343,7 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 			else:
 				await message.channel.send("You must be in a voice channel to use this command.")
 				return
-		elif command == "!leave_vc":
+		elif command_lower == "!leave_vc":
 			if message.guild.voice_client:
 				try:
 					await message.guild.voice_client.disconnect()
@@ -301,7 +357,7 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 			else:
 				await message.channel.send("I am not currently in a voice channel.")
 				return
-		elif command == "!help" or command == "!commands":
+		elif command_lower == "!help" or command_lower == "!commands":
 			help_msg = await message.channel.send("Here are the commands you can use:")
 			help_msg = await message.channel.send("`!join_vc` - Join the voice channel")
 			help_msg = await message.channel.send("`!leave_vc` - Leave the voice channel")
@@ -309,6 +365,8 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 			help_msg = await message.channel.send("`!txt2vid` - Generate a video based on the prompt (Permissions Required)")
 			help_msg = await message.channel.send("`!check models` - Check available models (Permissions Required)")
 			help_msg = await message.channel.send("`!load model <model_name>` - Load a specific model (Permissions Required)")
+			help_msg = await message.channel.send("`!change model <model_name>` - Change OpenClaw model")
+			help_msg = await message.channel.send("`!new session` - Start a new fresh session")
 			help_msg = await message.channel.send("`!recreate agent` - Recreate the agent")
 			help_msg = await message.channel.send("`!reset agent` - Reset messages")
 			help_msg = await message.channel.send("`!play <url>` - Play music from a URL")
@@ -319,16 +377,80 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 			help_msg = await message.channel.send("`!queue` - Shows the current songs in the queue")
 			return
 		else:
-			await message.channel.send("I'm sorry, I cannot run that here.")
+			await message.channel.send(f"I'm sorry, I cannot run '{command}' here.")
 			return
 
 	# Handling commands in regular channels
 
-	if command.startswith("!draw") or command.startswith("!send"):
+	if command_lower.startswith("!draw") or command_lower.startswith("!send"):
 		draw_msg = await message.channel.send("Hang on while I get that for you...")
 		image_queue.put_nowait(Draw_Task(config, message, user_message_histories, bot, draw_msg))
 		return
-	elif command == "!join_vc":
+	elif command_lower == "!new session":
+		if message.author.id in config["Power_Users"]:
+			try:
+				from openclaw import start_openclaw_new_session
+				success = await start_openclaw_new_session(config, message.author.id)
+				# Also clear local history
+				if str(message.author.id) in user_message_histories:
+					user_message_histories[str(message.author.id)] = []
+					save_message_histories(history_file_name, user_message_histories)
+				
+				if success:
+					await message.channel.send("New session started successfully.")
+				else:
+					await message.channel.send("Failed to start new session on Gateway, but local history cleared.")
+				return
+			except Exception as e:
+				logging.error(f"Error starting new session: {e}")
+				await message.channel.send(f"Error starting new session: {e}")
+				return
+		else:
+			await message.channel.send("I'm sorry, you do not have permission to run this command.")
+			return
+	elif command_lower == "!recreate agent":
+		if message.author.id in config["Power_Users"]:
+			try:
+				load_msg = await message.channel.send("Recreating agent.")
+				# Clear local history first
+				if str(message.author.id) in user_message_histories:
+					user_message_histories[str(message.author.id)] = []
+					save_message_histories(history_file_name, user_message_histories)
+				
+				from openclaw import delete_openclaw_agent
+				await delete_openclaw_agent(config, message.author.id, message.author.display_name)
+				
+				logging.info("Restarting process...")
+				os.execv(sys.executable, [sys.executable] + sys.argv)
+				return
+			except Exception as e:
+				logging.exception(f"Error recreating agent: {e}")
+				await load_msg.edit(content=f"I am sorry there is a problem recreating the agent: {e}")
+				return
+		else:
+			await message.channel.send("I'm sorry, you do not have permission to run this command.")
+			return
+	elif command_lower == "!reset agent":
+		if message.author.id in config["Power_Users"]:
+			try:
+				# Clear local history
+				if str(message.author.id) in user_message_histories:
+					user_message_histories[str(message.author.id)] = []
+					save_message_histories(history_file_name, user_message_histories)
+				
+				from openclaw import reset_openclaw_messages
+				await reset_openclaw_messages(config, message.author.id)
+				
+				await message.channel.send("Messages reset successfully.")
+				return
+			except Exception as e:
+				logging.error(f"Error resetting agent: {e}")
+				await message.channel.send("I am sorry there is a problem with resetting the messages.")
+				return
+		else:
+			await message.channel.send("I'm sorry, you do not have permission to run this command.")
+			return
+	elif command_lower == "!join_vc":
 		if message.author.voice:
 			try:
 				voice_channel_id = message.author.voice.channel.id
@@ -342,7 +464,7 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 		else:
 			await message.channel.send("You must be in a voice channel to use this command.")
 			return
-	elif command == "!leave_vc":
+	elif command_lower == "!leave_vc":
 		if message.guild.voice_client:
 			try:
 				await message.guild.voice_client.disconnect()
@@ -356,7 +478,7 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 		else:
 			await message.channel.send("I am not currently in a voice channel.")
 			return
-	elif command.startswith("!play"):
+	elif command_lower.startswith("!play"):
 		try:
 			# Add checks to ensure message.guild and message.author.voice are valid
 			if not message.guild:
@@ -414,7 +536,7 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 			logging.exception(f"Error processing play command: {e}")
 			await message.channel.send(f"I am sorry. There was a problem. {e}")
 			return
-	elif command == "!skip":
+	elif command_lower == "!skip":
 		try:
 			guild_id = message.guild.id
 			if guild_id in music_players:
@@ -429,7 +551,7 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 			logging.error(f"Error processing skip command: {e}")
 			await message.channel.send(f"I am sorry. There was a problem. {e}")
 			return
-	elif command == "!stop":
+	elif command_lower == "!stop":
 		try:
 			guild_id = message.guild.id
 			if guild_id in music_players:
@@ -444,7 +566,7 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 			logging.error(f"Error processing stop command: {e}")
 			await message.channel.send(f"I am sorry. There was a problem. {e}")
 			return
-	elif command.startswith("!volume"):
+	elif command_lower.startswith("!volume"):
 		try:
 			guild_id = message.guild.id
 			if guild_id in music_players:
@@ -470,7 +592,7 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 			logging.error(f"Error processing volume command: {e}")
 		await message.channel.send(f"I am sorry. There was a problem. {e}")
 		return
-	elif command == "!now_playing":
+	elif command_lower == "!now_playing":
 		try:
 			guild_id = message.guild.id
 			if guild_id in music_players:
@@ -488,7 +610,7 @@ async def handle_command(message, config, user_message_histories, bot, history_f
 			logging.error(f"Error processing now_playing command: {e}")
 		await message.channel.send(f"I am sorry. There was a problem. {e}")
 		return
-	elif command == "!queue":
+	elif command_lower == "!queue":
 		try:
 			guild_id = message.guild.id
 			if guild_id in music_players:
@@ -681,7 +803,7 @@ async def handle_messages(config, message, user_message_histories, history_file_
 
 			if is_command:
 				await handle_command(message, config, user_message_histories, bot, history_file_name)
-				logging.info("Message is a command. Ignoring for MemGPT processing.")
+				logging.info("Message is a command. Ignoring for OpenClaw processing.")
 				return #This return statement is crucial; it prevents further processing
 				
 		#If the message is a dm, has AllowDMResponse enabled, let it action regardless of OnlyWhenCalled
