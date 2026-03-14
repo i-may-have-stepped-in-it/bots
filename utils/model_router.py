@@ -9,13 +9,16 @@ Usage:
     # Route a user message
     model = route_message(user_message, default_model="zai/glm-4.7-flash")
     
+    # Or with config for custom model mappings
+    model = route_message(user_message, config=config)
+    
     # Or just get complexity score
     score = calculate_complexity_score(user_message)
 """
 
 import re
 import logging
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 
@@ -26,7 +29,6 @@ logger = logging.getLogger(__name__)
 class ModelTier(Enum):
     """Model tiers matching the bash router."""
     HIGHSPEED = "highspeed"
-    BALANCED = "balanced"
     INTELLIGENCE = "intelligence"
     UNCENSORED = "uncensored"
 
@@ -40,24 +42,881 @@ class RoutingDecision:
     reason: str
     tokens: int
     fallback_model: Optional[str] = None
+    fallback_chain: Optional[List[str]] = None
 
 
-# Model mappings
-MODELS = {
-    ModelTier.INTELLIGENCE: "moonshot/kimi-k2.5",
-    ModelTier.BALANCED: "minimax/m2.5",
-    ModelTier.HIGHSPEED: "zai/glm-4.7-flash",
-    ModelTier.UNCENSORED: "venice/GLM-4.7-Flash-Heretic",
-}
+def get_models_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[ModelTier, str]:
+    """Get model mappings from config or use defaults from ModelRouterConfig."""
+    # Import here to avoid circular dependency
+    from core.config import ModelRouterConfig
+    
+    defaults = ModelRouterConfig()
+    
+    if config is None:
+        return {
+            ModelTier.INTELLIGENCE: defaults.intelligence_model,
+            ModelTier.HIGHSPEED: defaults.highspeed_model,
+            ModelTier.UNCENSORED: defaults.uncensored_model,
+        }
+    
+    router_config = config.get("model_router", {})
+    return {
+        ModelTier.INTELLIGENCE: router_config.get("intelligence_model", defaults.intelligence_model),
+        ModelTier.HIGHSPEED: router_config.get("highspeed_model", defaults.highspeed_model),
+        ModelTier.UNCENSORED: router_config.get("uncensored_model", defaults.uncensored_model),
+    }
 
-# Fallback models (for when primary is unavailable)
-FALLBACK_MODELS = {
-    ModelTier.UNCENSORED: "localai/Qwen3-14B-Nexa-Uncensored",
-}
+
+def get_fallback_chains_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[ModelTier, List[str]]:
+    """Get fallback chains from config or use defaults from ModelRouterConfig."""
+    # Import here to avoid circular dependency
+    from core.config import ModelRouterConfig
+    
+    defaults = ModelRouterConfig()
+    
+    if config is None:
+        return {
+            ModelTier.INTELLIGENCE: list(defaults.intelligence_fallbacks),
+            ModelTier.HIGHSPEED: list(defaults.highspeed_fallbacks),
+            ModelTier.UNCENSORED: list(defaults.uncensored_fallbacks),
+        }
+    
+    router_config = config.get("model_router", {})
+    return {
+        ModelTier.INTELLIGENCE: router_config.get("intelligence_fallbacks", list(defaults.intelligence_fallbacks)),
+        ModelTier.HIGHSPEED: router_config.get("highspeed_fallbacks", list(defaults.highspeed_fallbacks)),
+        ModelTier.UNCENSORED: router_config.get("uncensored_fallbacks", list(defaults.uncensored_fallbacks)),
+    }
+
+
+# Backwards compatibility - these are dynamic but cached at module level
+# Use get_models_from_config() and get_fallback_chains_from_config() for fresh values
+MODELS = get_models_from_config()
+FALLBACK_CHAINS = get_fallback_chains_from_config()
 
 # Budget configuration
 MONTHLY_BUDGET = 15.0
 DAILY_BUDGET = 1.5
+
+# Keyword lists for scoring and routing
+ERROR_KEYWORDS = [
+    "error", "errors", "exception", "exceptions", "fail", "failed", "failing", "failure",
+    "crash", "crashed", "bug", "broken", "debug", "debugging", "troubleshoot", "troubleshooting",
+    "not working", "doesn't work", "timeout", "timed out", "hang", "hanging", "stuck",
+    "regression", "flaky", "unstable", "stack trace", "traceback", "segfault", "panic", "null pointer",
+]
+
+HIGH_COMPLEXITY_KEYWORDS = [
+    "architecture", "system design", "design pattern", "distributed", "scalable", "scalability",
+    "microservice", "infrastructure", "fault tolerance", "high availability", "event driven",
+    "event-driven", "queue", "pub sub", "pub-sub", "multitenant", "multi tenant", "data pipeline",
+]
+
+REASONING_KEYWORDS = [
+    "analyze", "analysis", "evaluate", "comparison", "compare", "tradeoff", "tradeoffs",
+    "implications", "assess", "assessment", "research", "investigate", "study", "optimize",
+    "optimization", "performance tune", "performance tuning", "profile", "benchmark", "root cause",
+    "root-cause", "pros and cons",
+]
+
+STANDARD_COMPLEXITY_KEYWORDS = [
+    "refactor", "implement", "implementation", "complex", "optimize", "performance", "concurrent",
+    "concurrency", "algorithm", "memory leak", "race condition", "deadlock", "bottleneck",
+    "thread safe", "thread-safe", "async", "synchronization", "latency",
+]
+
+MEDIUM_COMPLEXITY_KEYWORDS = [
+    "build", "create", "develop", "write", "generate", "configure", "setup", "deploy", "install",
+    "modify", "update", "patch", "migrate", "integrate", "wire up", "scaffold",
+]
+
+VAGUE_KEYWORDS = ["something", "stuff", "thing", "whatever", "etc", "..."]
+
+TASK_TYPE_KEYWORDS = {
+    "debugging": [
+        "debug", "troubleshoot", "diagnose", "fix", "error", "exception", "crash", "bug", "broken",
+        "not working", "doesn't work", "failed", "stack trace", "breakpoint", "traceback", "timeout",
+        "timed out", "regression", "flaky",
+    ],
+    "architecture": [
+        "architect", "architecture", "system design", "scalable", "distributed", "microservice",
+        "infrastructure", "pattern", "scalability", "fault tolerance", "high availability",
+    ],
+    "reasoning": [
+        "analyze", "evaluate", "compare", "tradeoffs", "implications", "assess", "research",
+        "investigate", "study", "optimize", "performance tuning", "benchmark", "root cause",
+    ],
+    "development": [
+        "code", "program", "develop", "implement", "build", "refactor", "script", "function", "api",
+        "database", "endpoint", "class", "method", "write code", "create function",
+    ],
+    "data": [
+        "metrics", "data", "analytics", "report", "dashboard", "visualization", "chart", "graph",
+        "sql", "aggregation", "kpi", "query plan",
+    ],
+    "query": [
+        "search", "find", "look up", "lookup", "check", "status", "query", "get", "show", "list",
+        "what is", "what are", "how to", "help with", "where is",
+    ],
+    "writing": [
+        "write", "draft", "compose", "summarize", "translate", "rewrite", "paraphrase", "format",
+        "edit", "proofread", "polish",
+    ],
+    "administrative": [
+        "schedule", "remind", "notify", "ping", "hello", "hi", "hey", "bye", "thanks", "thank you",
+        "ok", "okay", "sounds good", "got it",
+    ],
+}
+
+UNCENSORED_KEYWORD_PATTERNS = [
+    # Adult content indicators
+    r'\bxxx\b',
+    r'\bnsfw\b',
+    r'\bexplicit\b',
+    r'\buncensored\b',
+    r'\badult\b',
+    r'\berotic\b',
+    r'\bporn(ography|o|hub)?\b',
+    r'\bhentai\b',
+    r'\bsmut\b',
+    r'\blewd\b',
+    r'\bfetish(es)?\b',
+    r'\bbdsm\b',
+    r'\bkink(y)?\b',
+    r'\bnud(e|ity)\b',
+    r'\bnaked\b',
+    r'\bstrip(ping|tease)?\b',
+    r'\bnude\b',
+    r'\b18\+?\b',
+    r'\bx-rated\b',
+    r'\bxxx-rated\b',
+    r'\bsoftcore\b',
+    r'\bhardcore\b',
+    r'\byiff\b',
+    r'\bclop\b',
+    r'\bcub\b',
+    r'\bbara\b',
+    r'\byaoi\b',
+    r'\byuri\b',
+    r'\bfurry\b',
+    r'\bvore\b',
+    r'\binflation\b',
+    r'\bmacro\b',
+    r'\bmicro\b',
+    r'\bgiantess\b',
+    r'\bgiant\b',
+    r'\bshrink(ing)?\b',
+    # Body parts (strong signal)
+    r'\bnipples?\b',
+    r'\bpussy\b',
+    r'\bdick\b',
+    r'\bcock\b',
+    r'\btits?\b',
+    r'\bboobs?\b',
+    r'\bbreasts?\b',
+    r'\basshole\b',
+    r'\bcum\b',
+    r'\bsquirt(ing)?\b',
+    r'\bpenis\b',
+    r'\bvagina\b',
+    r'\bclit(oris)?\b',
+    r'\banus\b',
+    r'\bgenital(s|ia)?\b',
+    r'\btesticle?s?\b',
+    r'\bball(s|sack)?\b',
+    r'\bscrotum\b',
+    r'\bshaft\b',
+    r'\bshaft\b',
+    r'\bshaft\b',
+    r'\bblowjob\b',
+    r'\bhandjob\b',
+    r'\bfootjob\b',
+    r'\btitjob\b',
+    r'\bboobjob\b',
+    r'\bdeepthroat\b',
+    r'\bthroating\b',
+    r'\bthroated\b',
+    r'\bgag(ged|ging)?\b',
+    r'\bcreampie\b',
+    r'\bbukkake\b',
+    r'\bfacial\b',
+    r'\bcumshot\b',
+    r'\bmoney shot\b',
+    r'\bpearl necklace\b',
+    # Sexual acts / context
+    r'\bfuck(ing|ed|er)?\b',
+    r'\bsex(ual|y)?\b',
+    r'\bmasturbat(e|ing|ion)\b',
+    r'\bjerk(ing)?\s*off\b',
+    r'\bwank(ing)?\b',
+    r'\bfap(ping)?\b',
+    r'\bedging\b',
+    r'\boral\b',
+    r'\banal\b',
+    r'\bintercourse\b',
+    r'\bpenetrat(e|ion|ing)\b',
+    r'\bthrust(ing)?\b',
+    r'\borgasm(s)?\b',
+    r'\bclimax\b',
+    r'\bcum(ming)?\b',
+    r'\bsquirt(ing)?\b',
+    r'\bejaculat(e|ion)\b',
+    r'\barous(ed|al|ing)\b',
+    r'\bhorny\b',
+    r'\bwet\b',
+    r'\bhard\b',
+    r'\bboner\b',
+    r'\berection\b',
+    r'\blub(ricat|e)?\b',
+    r'\bmoan(ing)?\b',
+    r'\bgroan(ing)?\b',
+    r'\bwhimper(ing)?\b',
+    r'\bscream(ing)?\b',
+    r'\bwhore\b',
+    r'\bslut(ty)?\b',
+    r'\bbitch\b',
+    r'\bcunt\b',
+    r'\btwat\b',
+    r'\bescort\b',
+    r'\bprostitute\b',
+    r'\bhooker\b',
+    r'\bcall girl\b',
+    r'\bsex worker\b',
+    r'\bcam girl\b',
+    r'\bonlyfans\b',
+    r'\bcamwhore\b',
+    r'\bsugar baby\b',
+    r'\bsugar daddy\b',
+    # Roleplay / ERP context
+    r'\broleplay\b',
+    r'\berp\b',
+    r'\brp\b',
+    r'\bdominant\b',
+    r'\bsubmissive\b',
+    r'\bdominatrix\b',
+    r'\bdomme?\b',
+    r'\bsub\b',
+    r'\bmaster\b',
+    r'\bmistress\b',
+    r'\bslave\b',
+    r'\bpet\b',
+    r'\bowner\b',
+    r'\bbreeding\b',
+    r'\bknott(ing)?\b',
+    r'\bknot\b',
+    r'\bheat\b',
+    r'\brut\b',
+    r'\bmating\b',
+    r'\bimpregnat(e|ion)\b',
+    r'\bbreed(ing)?\b',
+    r'\begg laying\b',
+    r'\boviposition\b',
+    r'\btentacle(s)?\b',
+    r'\bmonster(s)?\b',
+    r'\bcreature\b',
+    r'\balien\b',
+    r'\bdemon\b',
+    r'\bsuccubus\b',
+    r'\bincubus\b',
+    r'\bangel\b',
+    r'\bwitch\b',
+    r'\belf\b',
+    r'\borc\b',
+    r'\bgoblin\b',
+    r'\bdragon\b',
+    r'\bwerewolf\b',
+    r'\bvampire\b',
+    r'\bzombie\b',
+    r'\brobot\b',
+    r'\bandroid\b',
+    r'\bsexbot\b',
+    r'\bpleasure bot\b',
+    # Kinks / Paraphilias
+    r'\bbondage\b',
+    r'\bshibari\b',
+    r'\brope(play)?\b',
+    r'\brestriction\b',
+    r'\brestraint(s)?\b',
+    r'\bcuffs\b',
+    r'\bcollar\b',
+    r'\bleash\b',
+    r'\bchains?\b',
+    r'\bcage\b',
+    r'\bcell\b',
+    r'\bconfinement\b',
+    r'\bspank(ing)?\b',
+    r'\bwhip(ping)?\b',
+    r'\bflog(ging)?\b',
+    r'\bcane\b',
+    r'\bpaddle\b',
+    r'\bcrop\b',
+    r'\bcaning\b',
+    r'\bcorporal\b',
+    r'\bpunish(ment)?\b',
+    r'\btorture\b',
+    r'\bcbt\b',
+    r'\bball bust(ing)?\b',
+    r'\bchastity\b',
+    r'\bcage\b',
+    r'\bdenial\b',
+    r'\btease(ing)?\b',
+    r'\bdenial\b',
+    r'\bforced\b',
+    r'\brough\b',
+    r'\bbrutal\b',
+    r'\bviolent\b',
+    r'\bnoncon\b',
+    r'\bdubcon\b',
+    r'\bconsent\b',
+    r'\bsomnophilia\b',
+    r'\bsleep(ing)?\b',
+    r'\bunconscious\b',
+    r'\bdrugged\b',
+    r'\bintoxicated\b',
+    r'\bdrunk\b',
+    r'\bhigh\b',
+    r'\bstoned\b',
+    r'\bhypnosis\b',
+    r'\bmind control\b',
+    r'\bbrainwash(ing)?\b',
+    r'\bbimbo(fy|ification)?\b',
+    r'\bsiss(y|ification)?\b',
+    r'\bcrossdress(ing)?\b',
+    r'\btransvestite\b',
+    r'\bfeminiz(e|ation)\b',
+    r'\bmasculiniz(e|ation)\b',
+    r'\btransformation\b',
+    r'\btf\b',
+    r'\bbody swap\b',
+    r'\bpossession\b',
+    r'\bparasite\b',
+    r'\binfection\b',
+    r'\bcorruption\b',
+    r'\bheart\b',
+    r'\bheart\b',
+    r'\bmind break\b',
+    r'\baphrodisiac\b',
+    r'\bpheromone(s)?\b',
+    r'\bheat\b',
+    r'\brut\b',
+    r'\bestrus\b',
+    r'\bpuberty\b',
+    r'\bvirgin(ity)?\b',
+    r'\bdeflower(ing)?\b',
+    r'\bcherry\b',
+    r'\bfirst time\b',
+    r'\binnocent\b',
+    r'\byoung\b',
+    r'\bteen(ager)?\b',
+    r'\bminor\b',
+    r'\bunderage\b',
+    r'\bjailbait\b',
+    r'\blolicon\b',
+    r'\bshotacon\b',
+    r'\bcub\b',
+    r'\bpederasty\b',
+    r'\bpedophil(e|ia)\b',
+    r'\bhebephil(e|ia)\b',
+    r'\bephebophil(e|ia)\b',
+    # Watersports / Scat
+    r'\bwatersports?\b',
+    r'\bpee(ing)?\b',
+    r'\bpiss(ing)?\b',
+    r'\burin(e|ation)\b',
+    r'\bgolden shower\b',
+    r'\bscat\b',
+    r'\bshit(ting)?\b',
+    r'\bpoop(ing)?\b',
+    r'\bdefecat(e|ion)\b',
+    r'\bcopro(philia)?\b',
+    r'\benema\b',
+    r'\bdouche\b',
+    # Blood / Gore
+    r'\bblood(play)?\b',
+    r'\bmenstruat(e|ion)\b',
+    r'\bperiod\b',
+    r'\bmenstrual\b',
+    r'\bgore\b',
+    r'\bviolent\b',
+    r'\bsnuff\b',
+    r'\bdeath\b',
+    r'\bmurder\b',
+    r'\bkilling\b',
+    r'\btorture\b',
+    r'\bdismember(ment)?\b',
+    r'\bdecapitat(e|ion)\b',
+    r'\bamputat(e|ion)\b',
+    r'\bcannibal(ism)?\b',
+    r'\bvorarephilia\b',
+    r'\bvore\b',
+    r'\bunbirth\b',
+    r'\banal vore\b',
+    r'\bc吸收\b',
+    # Other paraphilias
+    r'\bexhibitionism\b',
+    r'\bvoyeur(ism)?\b',
+    r'\bpublic\b',
+    r'\boutdoor(s)?\b',
+    r'\bcar\b',
+    r'\bbathroom\b',
+    r'\btoilet\b',
+    r'\bstall\b',
+    r'\bfitting room\b',
+    r'\bchanging room\b',
+    r'\bpool\b',
+    r'\bbeach\b',
+    r'\bpark\b',
+    r'\bwoods\b',
+    r'\bforest\b',
+    r'\bnudist\b',
+    r'\bnaturist\b',
+    r'\bstreak(ing)?\b',
+    r'\bflashing\b',
+    r'\bupskirt\b',
+    r'\bdownblouse\b',
+    r'\bglory hole\b',
+    r'\bbathhouse\b',
+    r'\bsauna\b',
+    r'\bgym\b',
+    r'\blocker room\b',
+    r'\bshower\b',
+    r'\b locker\b',
+    r'\bsauna\b',
+    r'\bsteam room\b',
+    r'\bhot spring\b',
+    r'\bonsen\b',
+    r'\bmassage\b',
+    r'\bspa\b',
+    r'\bhappy ending\b',
+    r'\bfull service\b',
+    r'\bbrothel\b',
+    r'\bwhorehouse\b',
+    r'\bbordello\b',
+    r'\bcat house\b',
+    r'\bmassage parlor\b',
+    r'\bstrip club\b',
+    r'\bgentlemen\'?s club\b',
+    r'\bbar\b',
+    r'\bclub\b',
+    r'\bparty\b',
+    r'\borg(y|ies)?\b',
+    r'\bgangbang\b',
+    r'\bgroup sex\b',
+    r'\bthreesome\b',
+    r'\bfoursome\b',
+    r'\bswing(er|ing)?\b',
+    r'\bswapping\b',
+    r'\bcuck(old)?\b',
+    r'\bcuckold(ress)?\b',
+    r'\bbull\b',
+    r'\bstud\b',
+    r'\bstag\b',
+    r'\bhotwife\b',
+    r'\bwifesharing\b',
+    r'\bwifesharing\b',
+    r'\bhotwifing\b',
+    r'\bclean-up\b',
+    r'\bsloppy seconds\b',
+    r'\bcream pie\b',
+    r'\bsnowball(ing)?\b',
+    r'\bfelch(ing)?\b',
+    r'\bass to mouth\b',
+    r'\batm\b',
+    r'\bdouble penetration\b',
+    r'\bdp\b',
+    r'\btriple penetration\b',
+    r'\bdap\b',
+    r'\bdvp\b',
+    r'\bairtight\b',
+    r'\bspitroast\b',
+    r'\brotisserie\b',
+    r'\btag team\b',
+    r'\btrain\b',
+    r'\bline\b',
+    # Clothing / Lingerie
+    r'\blingerie\b',
+    r'\bpanties\b',
+    r'\bunderwear\b',
+    r'\bthong\b',
+    r'\bg-string\b',
+    r'\bbra\b',
+    r'\bstockings?\b',
+    r'\bpantyhose\b',
+    r'\bnylon(s)?\b',
+    r'\bheel(s)?\b',
+    r'\bstiletto(s)?\b',
+    r'\bpumps\b',
+    r'\bboots?\b',
+    r'\bleather\b',
+    r'\blatex\b',
+    r'\brubber\b',
+    r'\bpvc\b',
+    r'\bvinyl\b',
+    r'\bspandex\b',
+    r'\blycra\b',
+    r'\bbodysuit\b',
+    r'\bcatsuit\b',
+    r'\bcorset\b',
+    r'\bbustier\b',
+    r'\bgarter\b',
+    r'\bsuspenders?\b',
+    r'\bcostume\b',
+    r'\bcosplay\b',
+    r'\buniform\b',
+    r'\bmaid\b',
+    r'\bnurse\b',
+    r'\bsecretary\b',
+    r'\bschoolgirl\b',
+    r'\bcheerleader\b',
+    r'\bflight attendant\b',
+    r'\bstewardess\b',
+    r'\bteacher\b',
+    r'\bprofessor\b',
+    r'\bstudent\b',
+    r'\btutor\b',
+    r'\bparent\b',
+    r'\bsibling\b',
+    r'\bsister\b',
+    r'\bbrother\b',
+    r'\bmother\b',
+    r'\bfather\b',
+    r'\bdaughter\b',
+    r'\bson\b',
+    r'\baunt\b',
+    r'\buncle\b',
+    r'\bcousin\b',
+    r'\bniece\b',
+    r'\bnephew\b',
+    r'\bgrandmother\b',
+    r'\bgrandfather\b',
+    r'\bgranddaughter\b',
+    r'\bgrandson\b',
+    r'\bstep-?(mom|dad|sister|brother|daughter|son)\b',
+    r'\bin-law\b',
+    r'\bincest\b',
+    r'\btaboo\b',
+    r'\bforbidden\b',
+    r'\bsecret\b',
+    r'\billicit\b',
+    # Body types / Preferences
+    r'\b bbw\b',
+    r'\b ssbbw\b',
+    r'\b chubby\b',
+    r'\b fat\b',
+    r'\b thick\b',
+    r'\b curvy\b',
+    r'\b voluptuous\b',
+    r'\b plus[- ]?size\b',
+    r'\b milf\b',
+    r'\b cougar\b',
+    r'\b dilf\b',
+    r'\b gilf\b',
+    r'\b mature\b',
+    r'\b granny\b',
+    r'\b grandpa\b',
+    r'\b daddy\b',
+    r'\b mommy\b',
+    r'\b mummy\b',
+    r'\b papa\b',
+    r'\b mom\b',
+    r'\b dad\b',
+    r'\b baby\b',
+    r'\b babe\b',
+    r'\b sweetie\b',
+    r'\b honey\b',
+    r'\b darling\b',
+    r'\b love\b',
+    r'\b darling\b',
+    r'\b pet\b',
+    r'\b kitten\b',
+    r'\b puppy\b',
+    r'\b bunny\b',
+    r'\b pony\b',
+    r'\b horse\b',
+    r'\b dog\b',
+    r'\b bitch\b',
+    r'\b animal\b',
+    r'\bbeast(iality)?\b',
+    r'\bzoophil(e|ia)\b',
+    r'\bzoo\b',
+    r'\bfurry\b',
+    r'\b anthropomorphic\b',
+    r'\b anthro\b',
+    r'\b furry\b',
+    r'\b yiff(y)?\b',
+    r'\b murrsuit(er)?\b',
+    r'\b mur(r)?\b',
+    r'\b purr\b',
+    r'\b growl\b',
+    r'\b snarl\b',
+    r'\b hiss\b',
+    r'\b meow\b',
+    r'\b bark\b',
+    r'\b howl\b',
+    r'\b neigh\b',
+    r'\b whinny\b',
+    r'\b moo\b',
+    r'\b oink\b',
+    r'\b cluck\b',
+    r'\b chirp\b',
+    r'\b squeak\b',
+    r'\b screech\b',
+    r'\b roar\b',
+    # Toys / Equipment
+    r'\b dildo\b',
+    r'\b vibrator\b',
+    r'\b butt plug\b',
+    r'\b plug\b',
+    r'\b beads\b',
+    r'\b anal beads\b',
+    r'\b prostate\b',
+    r'\b p[- ]?spot\b',
+    r'\b g[- ]?spot\b',
+    r'\b clit(oral)?\b',
+    r'\b rabbit\b',
+    r'\b wand\b',
+    r'\b hitachi\b',
+    r'\b magic wand\b',
+    r'\b sybian\b',
+    r'\b fuck machine\b',
+    r'\b sex machine\b',
+    r'\b sex toy\b',
+    r'\b toy(s)?\b',
+    r'\b strap[- ]?on\b',
+    r'\b harness\b',
+    r'\b double[- ]?ended\b',
+    r'\b prostate massager\b',
+    r'\b masturbator\b',
+    r'\b fleshlight\b',
+    r'\b pocket pussy\b',
+    r'\b onahole\b',
+    r'\b tenga\b',
+    r'\b doll\b',
+    r'\b sex doll\b',
+    r'\b blow[- ]?up doll\b',
+    r'\breal doll\b',
+    r'\b realdoll\b',
+    r'\b love doll\b',
+    r'\b silicone doll\b',
+    r'\b tpe doll\b',
+    r'\b mini doll\b',
+    r'\b torso\b',
+    r'\b masturbator\b',
+    r'\bsleeve\b',
+    r'\bextension\b',
+    r'\bring\b',
+    r'\bcock ring\b',
+    r'\bpenis ring\b',
+    r'\bviagra\b',
+    r'\bcialis\b',
+    r'\b lube\b',
+    r'\b lubricant\b',
+    r'\b oil\b',
+    r'\b lotion\b',
+    r'\b cream\b',
+    r'\b gel\b',
+    r'\b spray\b',
+    r'\b delay\b',
+    r'\b stamina\b',
+    r'\b condom(s)?\b',
+    r'\b prophylactic\b',
+    r'\b birth control\b',
+    r'\b contraception\b',
+    r'\b morning after\b',
+    r'\b plan b\b',
+    r'\b iud\b',
+    r'\b implant\b',
+    r'\b shot\b',
+    r'\b patch\b',
+    r'\b pill\b',
+    r'\b sponge\b',
+    r'\b cap\b',
+    r'\b diaphragm\b',
+    # Positions / Actions
+    r'\b missionary\b',
+    r'\b doggy\b',
+    r'\b doggystyle\b',
+    r'\b cowgirl\b',
+    r'\b reverse cowgirl\b',
+    r'\b spoon(ing)?\b',
+    r'\b scissor(ing)?\b',
+    r'\b69\b',
+    r'\b sixty[- ]?nine\b',
+    r'\b standing\b',
+    r'\b sitting\b',
+    r'\b lying\b',
+    r'\b bent over\b',
+    r'\b on all fours\b',
+    r'\b legs up\b',
+    r'\b spread(ing)?\b',
+    r'\b open\b',
+    r'\b wide\b',
+    r'\bshallow\b',
+    r'\b deep\b',
+    r'\b hard\b',
+    r'\b fast\b',
+    r'\b slow\b',
+    r'\b gentle\b',
+    r'\brough\b',
+    r'\b wild\b',
+    r'\b passionate\b',
+    r'\bintense\b',
+    r'\bfierce\b',
+    r'\bsavage\b',
+    r'\banimalistic\b',
+    r'\bprimal\b',
+    r'\bbestial\b',
+    r'\bbestiality\b',
+    r'\bzoophilia\b',
+    # Media / Content types
+    r'\bvideo\b',
+    r'\bpicture\b',
+    r'\bphoto\b',
+    r'\bimage\b',
+    r'\bgif\b',
+    r'\bgif\b',
+    r'\bclip\b',
+    r'\bscene\b',
+    r'\bmovie\b',
+    r'\bfilm\b',
+    r'\bstream\b',
+    r'\blivestream\b',
+    r'\bcam(show)?\b',
+    r'\bwebcam\b',
+    r'\bchat\b',
+    r'\bsext(ing)?\b',
+    r'\bdirty talk\b',
+    r'\bphone sex\b',
+    r'\bcyber sex\b',
+    r'\bonline sex\b',
+    r'\bvirtual sex\b',
+    r'\bvr sex\b',
+    r'\bteledildonics\b',
+    r'\bremote\b',
+    r'\bapp\b',
+    r'\btoy\b',
+    r'\bcontrol\b',
+    r'\bpower\b',
+    r'\bexchange\b',
+    r'\bdynamic\b',
+    r'\brelationship\b',
+    r'\bpartner(s)?\b',
+    r'\bplay\b',
+    r'\bscene\b',
+    r'\bsession\b',
+    r'\bexperience\b',
+    r'\bencounter\b',
+    r'\bhookup\b',
+    r'\b one[- ]?night[- ]?stand\b',
+    r'\b casual\b',
+    r'\b fling\b',
+    r'\b affair\b',
+    r'\b cheating\b',
+    r'\b infidelity\b',
+    r'\b adulter(y|ous)?\b',
+    r'\b open relationship\b',
+    r'\b poly(amory|amorous)?\b',
+    r'\b swinging\b',
+    r'\b monogam(y|ous)?\b',
+    r'\bnon-monogam(y|ous)?\b',
+    r'\brelationship\b',
+    r'\b dating\b',
+    r'\b tinder\b',
+    r'\b grindr\b',
+    r'\b bumble\b',
+    r'\b hinge\b',
+    r'\b okcupid\b',
+    r'\b match\b',
+    r'\b pof\b',
+    r'\b plenty of fish\b',
+    r'\b fetlife\b',
+    r'\b adult friend finder\b',
+    r'\b ashley madison\b',
+    r'\b seeking\b',
+    r'\b arrangement\b',
+    r'\b sugar\b',
+    r'\b sugar daddy\b',
+    r'\b sugar baby\b',
+    r'\b sugar momma\b',
+    r'\b sugar mama\b',
+    # Story / Fiction
+    r'\bstory\b',
+    r'\bfiction\b',
+    r'\bfanfic(tion)?\b',
+    r'\bsmut\b',
+    r'\blemon\b',
+    r'\blime\b',
+    r'\borange\b',
+    r'\bgrapefruit\b',
+    r'\b pwp\b',
+    r'\b plot\b',
+    r'\b what\b',
+    r'\b porn\b',
+    r'\b without\b',
+    r'\b plot\b',
+    r'\b one[- ]?shot\b',
+    r'\b multi[- ]?chapter\b',
+    r'\b series\b',
+    r'\b chapter\b',
+    r'\b part\b',
+    r'\b episode\b',
+    r'\b season\b',
+    r'\b sequel\b',
+    r'\b prequel\b',
+    r'\b spin[- ]?off\b',
+    r'\b au\b',
+    r'\b alternate universe\b',
+    r'\b ooc\b',
+    r'\b out of character\b',
+    r'\b ic\b',
+    r'\b in character\b',
+    r'\b oc\b',
+    r'\b original character\b',
+    r'\b self[- ]?insert\b',
+    r'\b reader insert\b',
+    r'\b y/n\b',
+    r'\b your name\b',
+    r'\b x reader\b',
+    r'\b character x character\b',
+    r'\b ship\b',
+    r'\b pairing\b',
+    r'\b couple\b',
+    r'\b duo\b',
+    r'\b trio\b',
+    r'\b harem\b',
+    r'\b reverse harem\b',
+    r'\b ot3\b',
+    r'\b ot4\b',
+    r'\b ot[0-9]+\b',
+    r'\b poly(ship)?\b',
+    r'\b polyamory\b',
+    r'\b polyamorous\b',
+    r'\b polygamy\b',
+    r'\b polygamous\b',
+    r'\b bigamy\b',
+    r'\b bigamous\b',
+    # Additional explicit / context patterns
+    r'\bdaddy\b.*\b(kink|fuck|cum|cock|dick|slut|whore|baby|girl|boy)\b',
+    r'\b(mommy|mother)\b.*\b(kink|fuck|cum|cock|dick|slut|whore|baby|girl|boy)\b',
+    r'\bbaby\b.*\b(girl|boy)\b.*\b(daddy|mommy)\b',
+    r'\bmaster\b.*\b(slave|pet|servant|sub|toy)\b',
+    r'\bmistress\b.*\b(slave|pet|servant|sub|toy)\b',
+    r'\bowner\b.*\b(pet|slave|toy)\b',
+    r'\bpimp\b.*\b(whore|slut|ho|hoe)\b',
+    r'\b(rape|rapist|raped)\b',
+    r'\bassault\b.*\b(sexual|sex)\b',
+    r'\bmolest(ation|er)?\b',
+    r'\babuse\b.*\b(sexual|sex)\b',
+]
+
+
+def _contains_phrase(text: str, phrases: List[str]) -> bool:
+    """Case-insensitive phrase matching with word boundaries."""
+    text_lower = text.lower()
+    for phrase in phrases:
+        if re.search(rf"\b{re.escape(phrase.lower())}\b", text_lower):
+            return True
+    return False
 
 
 def estimate_tokens(text: str) -> int:
@@ -110,7 +969,7 @@ def calculate_complexity_score(message: str) -> float:
         score += 0.3
     
     # Error/debugging indicators (high complexity)
-    if re.search(r'\b(error|exception|fail|crash|bug|broken|debug|troubleshoot|not working|doesn\'t work|failed)\b', msg_lower):
+    if _contains_phrase(msg_lower, ERROR_KEYWORDS):
         score += 0.25
     
     # Data patterns (metrics, numbers = analysis needed)
@@ -119,19 +978,19 @@ def calculate_complexity_score(message: str) -> float:
         score += 0.20
     
     # High complexity keywords (architecture, design, research)
-    if re.search(r'\b(architecture|design|system|scalable|distributed)\b', msg_lower):
+    if _contains_phrase(msg_lower, HIGH_COMPLEXITY_KEYWORDS):
         score += 0.35
     
     # Reasoning keywords (analysis, evaluation, tradeoffs)
-    if re.search(r'\b(analyze|evaluate|compare|tradeoffs|implications|assess|research|investigate|study|optimize|performance tune)\b', msg_lower):
+    if _contains_phrase(msg_lower, REASONING_KEYWORDS):
         score += 0.25
     
     # Standard complexity keywords
-    if re.search(r'\b(refactor|implement|complex|optimize|performance|concurrent|algorithm|memory leak|race condition|deadlock|bottleneck)\b', msg_lower):
+    if _contains_phrase(msg_lower, STANDARD_COMPLEXITY_KEYWORDS):
         score += 0.3
     
     # Medium complexity keywords
-    if re.search(r'\b(build|create|develop|write|generate|configure|setup|deploy|install|modify)\b', msg_lower):
+    if _contains_phrase(msg_lower, MEDIUM_COMPLEXITY_KEYWORDS):
         score += 0.1
     
     # Question complexity (multiple questions)
@@ -140,7 +999,7 @@ def calculate_complexity_score(message: str) -> float:
         score += 0.10
     
     # Vague terms (vague = needs stronger model)
-    if re.search(r'\b(something|stuff|thing|whatever|etc|…|\.\.\.)\b', msg_lower):
+    if _contains_phrase(msg_lower, VAGUE_KEYWORDS) or "…" in msg_lower:
         score += 0.15
     
     # Cap at 1.0
@@ -153,39 +1012,31 @@ def detect_task_type(message: str) -> str:
     Returns: debugging, architecture, reasoning, development, data, query, writing, administrative, general
     """
     msg_lower = message.lower()
-    
-    # DEBUGGING - Highest complexity
-    if re.search(r'\b(debug|troubleshoot|diagnose|fix|error|exception|crash|bug|broken|not working|doesn\'t work|failed|stack trace|breakpoint)\b', msg_lower):
+
+    if _contains_phrase(msg_lower, TASK_TYPE_KEYWORDS["debugging"]):
         return "debugging"
-    
-    # ARCHITECTURE - Highest complexity
-    if re.search(r'\b(architect|design.*system|scalable|distributed|microservice|infrastructure|pattern|scalability)\b', msg_lower):
+
+    if _contains_phrase(msg_lower, TASK_TYPE_KEYWORDS["architecture"]):
         return "architecture"
-    
-    # REASONING - High complexity
-    if re.search(r'\b(analyze|evaluate|compare.*tradeoffs|implications|assess|research|investigate|study|optimize|performance tune)\b', msg_lower):
+
+    if _contains_phrase(msg_lower, TASK_TYPE_KEYWORDS["reasoning"]):
         return "reasoning"
-    
-    # Development tasks
-    if re.search(r'\b(code|program|develop|implement|build|refactor|script|function|api|database|write.*code|create.*function)\b', msg_lower):
+
+    if _contains_phrase(msg_lower, TASK_TYPE_KEYWORDS["development"]):
         return "development"
-    
-    # Data/Metrics tasks
-    if re.search(r'\b(metrics|data|analytics|report|dashboard|visualization|chart|graph)\b', msg_lower):
+
+    if _contains_phrase(msg_lower, TASK_TYPE_KEYWORDS["data"]):
         return "data"
-    
-    # Query tasks
-    if re.search(r'\b(search|find|look up|check|status|query|get|show|list|what is|what are|how to|help with)\b', msg_lower):
+
+    if _contains_phrase(msg_lower, TASK_TYPE_KEYWORDS["query"]):
         return "query"
-    
-    # Writing tasks
-    if re.search(r'\b(write|draft|compose|summarize|translate|rewrite|paraphrase|format|edit)\b', msg_lower):
+
+    if _contains_phrase(msg_lower, TASK_TYPE_KEYWORDS["writing"]):
         return "writing"
-    
-    # Administrative tasks
-    if re.search(r'\b(schedule|remind|notify|ping|hello|hi|bye|thanks|ok|yes|no)\b', msg_lower):
+
+    if _contains_phrase(msg_lower, TASK_TYPE_KEYWORDS["administrative"]):
         return "administrative"
-    
+
     return "general"
 
 
@@ -195,45 +1046,11 @@ def detect_uncensored_content(message: str) -> bool:
     Returns True if message contains explicit content indicators.
     """
     msg_lower = message.lower()
-    
-    # Explicit content keywords
-    # Note: This is for routing to uncensored models, not for blocking
-    explicit_keywords = [
-        # Adult content indicators
-        r'\bxxx\b',
-        r'\bnsfw\b',
-        r'\bexplicit\b',
-        r'\buncensored\b',
-        r'\badult\b',
-        r'\berotic\b',
-        r'\bporn\b',
-        r'\bhentai\b',
-        # Body parts (context-dependent, but strong signal)
-        r'\bnipples?\b',
-        r'\bpussy\b',
-        r'\bdick\b',
-        r'\bcock\b',
-        r'\btits?\b',
-        r'\bboobs?\b',
-        r'\basshole\b',
-        r'\bcum\b',
-        r'\bsquirt\b',
-        # Sexual acts
-        r'\bfuck(ing)?\b',
-        r'\bsex\b',
-        r'\bmasturbat(e|ing|ion)\b',
-        r'\boral sex\b',
-        r'\banal\b',
-        # Roleplay/context indicators
-        r'\bdaddy\b.*\bkink',
-        r'\bsubmissive\b',
-        r'\bdominant\b',
-    ]
-    
-    for pattern in explicit_keywords:
+
+    for pattern in UNCENSORED_KEYWORD_PATTERNS:
         if re.search(pattern, msg_lower):
             return True
-    
+
     return False
 
 
@@ -248,7 +1065,7 @@ def check_prefix_routing(message: str) -> Optional[str]:
         return MODELS[ModelTier.INTELLIGENCE]
     
     if re.match(r'^@minimax\b|^@mini\b|^@m\b', trimmed):
-        return MODELS[ModelTier.BALANCED]
+        return MODELS[ModelTier.HIGHSPEED]
     
     if re.match(r'^@flash\b|^@f\b', trimmed):
         return MODELS[ModelTier.HIGHSPEED]
@@ -256,7 +1073,7 @@ def check_prefix_routing(message: str) -> Optional[str]:
     if re.match(r'^@codex\b|^@c\b', trimmed):
         return "openai-codex/gpt-5.3-codex"
     
-    if re.match(r'^@uncensored\b|^@u\b|^@nsfw\b', trimmed):
+    if re.match(r'^@uncensored\b|^@uc\b|^@u\b|^@nsfw\b', trimmed):
         return MODELS[ModelTier.UNCENSORED]
     
     return None
@@ -274,24 +1091,22 @@ def get_tier_from_score(score: float, task_type: str) -> ModelTier:
         if score >= 0.5:
             return ModelTier.INTELLIGENCE
         else:
-            return ModelTier.BALANCED
+            return ModelTier.HIGHSPEED
     
     if task_type in ("query", "administrative"):
         return ModelTier.HIGHSPEED
     
     if task_type == "writing":
         if score >= 0.6:
-            return ModelTier.BALANCED
+            return ModelTier.INTELLIGENCE
         else:
             return ModelTier.HIGHSPEED
     
     # Default score-based routing
-    if score >= 0.6:
+    if score >= 0.5:
         return ModelTier.INTELLIGENCE
-    elif score <= 0.3:
-        return ModelTier.HIGHSPEED
     else:
-        return ModelTier.BALANCED
+        return ModelTier.HIGHSPEED
 
 
 def check_budget_override(current_spend: float, requested_tier: ModelTier) -> Optional[ModelTier]:
@@ -306,10 +1121,10 @@ def check_budget_override(current_spend: float, requested_tier: ModelTier) -> Op
         logger.warning(f"Budget at {budget_percent:.1f}% - forcing highspeed tier")
         return ModelTier.HIGHSPEED
     
-    # 90% budget - prefer balanced over intelligence
+    # 90% budget - downgrade to highspeed
     if budget_percent >= 90 and requested_tier == ModelTier.INTELLIGENCE:
-        logger.warning(f"Budget at {budget_percent:.1f}% - downgrading to balanced")
-        return ModelTier.BALANCED
+        logger.warning(f"Budget at {budget_percent:.1f}% - downgrading to highspeed")
+        return ModelTier.HIGHSPEED
     
     return None
 
@@ -319,7 +1134,8 @@ def route_message(
     default_model: str = "zai/glm-4.7-flash",
     current_spend: float = 0.0,
     user_id: Optional[str] = None,
-    user_name: Optional[str] = None
+    user_name: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None
 ) -> RoutingDecision:
     """
     Main routing function - determines the best model for a message.
@@ -330,39 +1146,46 @@ def route_message(
         current_spend: Current month's API spend (for budget checks)
         user_id: Discord user ID (for logging)
         user_name: Discord username (for logging)
+        config: Optional config dict with model_router section for custom model mappings
     
     Returns:
         RoutingDecision with tier, model, score, reason, and token estimate
     """
+    # Get model mappings from config or use defaults
+    models = get_models_from_config(config)
+    fallback_chains = get_fallback_chains_from_config(config)
+    
     # 1. Check for prefix routing (explicit user intent)
     prefix_model = check_prefix_routing(message)
     if prefix_model:
         # Determine tier from prefix model
         tier = ModelTier.HIGHSPEED
-        for t, m in MODELS.items():
+        for t, m in models.items():
             if m == prefix_model:
                 tier = t
                 break
-        # Include fallback for uncensored tier
-        fallback = FALLBACK_MODELS.get(tier) if tier == ModelTier.UNCENSORED else None
+        fallback_chain = list(fallback_chains.get(tier, []))
         return RoutingDecision(
             tier=tier,
             model=prefix_model,
             score=0.0,
             reason="prefix_override",
             tokens=estimate_tokens(message),
-            fallback_model=fallback
+            fallback_model=fallback_chain[0] if fallback_chain else None,
+            fallback_chain=fallback_chain
         )
     
     # 2. Check for uncensored/explicit content
     if detect_uncensored_content(message):
+        uncensored_fallbacks = fallback_chains.get(ModelTier.UNCENSORED, [])
         return RoutingDecision(
             tier=ModelTier.UNCENSORED,
-            model=MODELS[ModelTier.UNCENSORED],
+            model=models[ModelTier.UNCENSORED],
             score=0.0,
             reason="uncensored_content",
             tokens=estimate_tokens(message),
-            fallback_model=FALLBACK_MODELS.get(ModelTier.UNCENSORED)
+            fallback_model=uncensored_fallbacks[0] if uncensored_fallbacks else None,
+            fallback_chain=list(uncensored_fallbacks)
         )
     
     # 3. Calculate complexity
@@ -381,7 +1204,7 @@ def route_message(
         reason = f"score_{score:.1f}_task_{task_type}"
     
     # 5. Select model
-    model = MODELS.get(tier, default_model)
+    model = models.get(tier, default_model)
     tokens = estimate_tokens(message)
     
     # Log the decision
@@ -393,7 +1216,9 @@ def route_message(
         model=model,
         score=score,
         reason=reason,
-        tokens=tokens
+        tokens=tokens,
+        fallback_model=(fallback_chains.get(tier, [None])[0] if fallback_chains.get(tier) else None),
+        fallback_chain=list(fallback_chains.get(tier, []))
     )
 
 
@@ -431,11 +1256,11 @@ def get_prefix_help_text() -> str:
     """Get help text for prefix routing."""
     return """
 **Model Routing Prefixes:**
-• `@kimi` or `@k` - Use Kimi K2.5 (best for complex tasks)
-• `@mini` or `@m` - Use MiniMax M2.5 (balanced)
-• `@flash` or `@f` - Use Gemini Flash (fast, simple queries)
-• `@codex` or `@c` - Use GPT-5.3 Codex (coding)
-• `@uncensored` or `@u` - Use Venice GLM 4.7 Flash Heretic (adult/NSFW)
+• `@kimi` or `@k` - Use Intelligence tier (best for complex tasks)
+• `@mini` or `@m` - Use Highspeed tier (fast)
+• `@flash` or `@f` - Use Highspeed tier (fast, simple queries)
+• `@codex` or `@c` - Use Intelligence tier (coding)
+• `@uncensored` or `@u` - Use Uncensored tier (adult/NSFW content)
 
 Without a prefix, I'll automatically choose based on your message complexity.
 """.strip()
@@ -458,7 +1283,6 @@ class RouterStats:
     def __init__(self):
         self.requests = {
             ModelTier.INTELLIGENCE: 0,
-            ModelTier.BALANCED: 0,
             ModelTier.HIGHSPEED: 0,
             ModelTier.UNCENSORED: 0,
         }
@@ -471,9 +1295,8 @@ class RouterStats:
         # Estimate cost per request
         costs = {
             ModelTier.INTELLIGENCE: 0.008,
-            ModelTier.BALANCED: 0.002,
             ModelTier.HIGHSPEED: 0.0005,
-            ModelTier.UNCENSORED: 0.0005,  # Venice GLM 4.7 Flash is cheap like Flash
+            ModelTier.UNCENSORED: 0.0005,  # Venice GLM 4.7 Flash → Local fallback
         }
         self.estimated_cost += costs.get(decision.tier, 0.002)
     
@@ -486,9 +1309,8 @@ class RouterStats:
         lines = [
             "**Model Router Stats**",
             f"• Intelligence (Kimi): {self.requests[ModelTier.INTELLIGENCE]} requests",
-            f"• Balanced (MiniMax): {self.requests[ModelTier.BALANCED]} requests",
             f"• Highspeed (Flash): {self.requests[ModelTier.HIGHSPEED]} requests",
-            f"• Uncensored (Venice): {self.requests[ModelTier.UNCENSORED]} requests",
+            f"• Uncensored (Venice → Local): {self.requests[ModelTier.UNCENSORED]} requests",
             f"• Total: {total} requests",
             f"• Est. Cost: ${self.estimated_cost:.3f}",
         ]

@@ -681,7 +681,7 @@ You are a Stable Diffusion prompt engineer. Your ONLY task is writing vivid, det
                     for fallback_model in fallback_chain:
                         logging.warning(f"Primary model failed, trying fallback: {fallback_model}")
                         retry_payload = payload.copy()
-                        retry_payload["model"] = fallback_model.split("/")[-1]  # Strip provider prefix
+                        retry_payload["model"] = fallback_model  # Full path — OpenClaw routes by provider prefix
                         
                         async with session.post(
                             f"{self.url}/v1/chat/completions",
