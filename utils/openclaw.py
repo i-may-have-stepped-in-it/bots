@@ -275,7 +275,7 @@ class OpenClawClient:
         if self._verified_agents.get(agent_id) == primary_model:
             return agent_id
 
-        target_ip_url = config.get("OpenClawModelEndpoint")
+        target_ip_url = config.get("OpenClawModelEndpoint") or None
 
         try:
             get_result = await self.call_rpc("config.get", {})
@@ -288,7 +288,8 @@ class OpenClawClient:
 
             providers = payload.get("models", {}).get("providers", {})
             current_url = providers.get("localai", {}).get("baseUrl")
-            needs_provider_patch = current_url != target_ip_url
+            # Only patch provider if a target URL is configured and differs from current
+            needs_provider_patch = bool(target_ip_url) and (current_url != target_ip_url)
 
             # Grab existing agents list so we don't nuke other users
             existing_agents = payload.get("agents", {}).get("list", [])
@@ -389,21 +390,18 @@ class OpenClawClient:
                 }
             })
 
+            patch_body = {"agents": {"list": updated_agents}}
+            if target_ip_url:
+                localai_api_key = config.get("OpenClawBearer") or "password"
+                patch_body["models"] = {
+                    "providers": {
+                        "localai": {"baseUrl": target_ip_url, "apiKey": localai_api_key}
+                    }
+                }
+
             patch_rpc_payload = {
                 "baseHash": base_hash,
-                "raw": json.dumps({
-                    "models": {
-                        "providers": {
-                            "localai": {
-                                "baseUrl": target_ip_url,
-                                "apiKey": "password"
-                            }
-                        }
-                    },
-                    "agents": {
-                        "list": updated_agents
-                    }
-                }),
+                "raw": json.dumps(patch_body),
                 "note": f"Upserted agent {agent_id} with correct localai routing"
             }
 
@@ -724,12 +722,9 @@ You are a Stable Diffusion prompt engineer. Your ONLY task is writing vivid, det
         agent_id = await self.ensure_agent_exists(user_id, user_name, config)
         session_key = f"{self.prefix}:user:{user_id}"
         
-        # Get model ID (strip provider prefix for LocalAI compatibility)
+        # Use full model path — OpenClaw gateway routes by provider prefix
         requested_model = config.get("OpenClawmodel", "chat")
-        if "/" in requested_model:
-            model_id = requested_model.split("/")[-1]
-        else:
-            model_id = requested_model
+        model_id = requested_model
 
         # Inject persona as system message — beats OpenClaw's bootstrap at the LLM level
         messages_with_persona = self.inject_system_prompt(messages, user_name, config)
