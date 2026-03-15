@@ -54,6 +54,8 @@ RUN adduser -u 1000 --disabled-password --gecos "" appuser && \
     mkdir -p /app/torch/hub /home/appuser/nltk_data /app/config /app/data /app/logs && \
     chown -R 1000:1000 /app /home/appuser/nltk_data
 
+WORKDIR /app
+
 # Copy application source — COPY --chown avoids a separate chown layer
 COPY --chown=1000:1000 . /app
 
