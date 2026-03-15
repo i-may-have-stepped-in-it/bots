@@ -168,7 +168,7 @@ class BaseImageAdapter(ABC):
         Returns:
             Formatted prompt with positive prefix
         """
-        positive_prefix = self.config.get("SDPositivePrompt", "")
+        positive_prefix = self.config.get("SDPositivePrompt", "") or ""
         if isinstance(prompt, list):
-            prompt = " ".join(prompt)
-        return positive_prefix + prompt
+            prompt = " ".join(str(p) for p in prompt if p is not None)
+        return positive_prefix + (prompt or "")

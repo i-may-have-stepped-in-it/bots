@@ -132,8 +132,14 @@ async def generate_openai_response(config, user_id, user_message_histories, mess
 			# Create a copy of config to avoid modifying the original
 			config_copy = copy.deepcopy(config)
 			# Get uncensored model from config or use default
-			router_config = config.get("model_router", {})
-			uncensored_model = router_config.get("uncensored_model", "venice/venice-uncensored-role-play")
+			router_config = config.get("model_router")
+			# model_router may be a ModelRouterConfig Pydantic object or a plain dict
+			if hasattr(router_config, 'uncensored_model'):
+				uncensored_model = router_config.uncensored_model or "venice/venice-uncensored-role-play"
+			elif isinstance(router_config, dict):
+				uncensored_model = router_config.get("uncensored_model", "venice/venice-uncensored-role-play")
+			else:
+				uncensored_model = "venice/venice-uncensored-role-play"
 			# Force use of uncensored model for SD prompt generation
 			config_copy["OpenClawmodel"] = uncensored_model
 			config_copy["OpenClawAgent"] = ""  # Use default agent
