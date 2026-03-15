@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jennifer
+  namespace: jennifer
+  labels:
+    app: jennifer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jennifer
+  template:
+    metadata:
+      labels:
+        app: jennifer
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      # Init container mirrors the docker-compose 'init' service:
+      # sets ownership on mounted volumes before the bot starts.
+      initContainers:
+        - name: init-permissions
+          image: busybox
+          command: ["sh", "-c", "chown -R 1000:1000 /app/data /app/logs && chmod 755 /app/data /app/logs"]
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/logs
+
+      containers:
+        - name: jennifer
+          image: idacat411/app:latest
+          imagePullPolicy: Always
+          env:
+            - name: TQDM_DISABLE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: ENABLE_TRACING
+              value: "true"
+          resources:
+            limits:
+              cpu: "4"
+              memory: 8Gi
+            requests:
+              cpu: "500m"
+              memory: 2Gi
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import os; exit(0 if os.path.exists('/app/healthy') else 1)"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: config
+              mountPath: /app/config/config.json
+              subPath: config.json
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/logs
+            - name: nltk
+              mountPath: /home/appuser/nltk_data
+
+      volumes:
+        - name: config
+          secret:
+            secretName: jennifer-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: jennifer-data
+        - name: logs
+          persistentVolumeClaim:
+            claimName: jennifer-logs
+        - name: nltk
+          persistentVolumeClaim:
+            claimName: jennifer-nltk
+
+      restartPolicy: Always
