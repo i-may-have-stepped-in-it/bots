@@ -154,8 +154,7 @@ class BaseImageAdapter(ABC):
         """
         import logging
         url = self.config.get("SDURL", "").rstrip("/")
-        logging.info(f"DEBUG: get_base_url() returning: {url}")
-        logging.info(f"DEBUG: config type: {type(self.config)}")
+        logging.debug(f"get_base_url() returning: {url}, config type: {type(self.config)}")
         return url
     
     def format_prompt(self, prompt: str) -> str:
