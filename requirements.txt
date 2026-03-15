@@ -9,7 +9,7 @@ libnacl
 pynacl
 watchdog
 silero
-omegaconf 
+omegaconf
 torchaudio
 aiohttp
 speechrecognition
@@ -17,25 +17,18 @@ ffmpeg
 openai-whisper
 soundfile
 nltk
-sphinx
 pocketsphinx
 pexpect
 aiofiles
 diffusers
 transformers
 accelerate
-discord
+discord.py>=2.3
 opencv-python
 imageio
 imageio-ffmpeg
 docker
 yt-dlp
-# Refactoring additions
 pydantic>=2.0
 pydantic-settings>=2.0
 aiosqlite>=0.19.0
-
-# Testing (also used in production for health checks)
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-pytest-cov>=4.1.0

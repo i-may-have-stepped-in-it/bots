@@ -41,3 +41,11 @@ vllm/
 *.yml
 *.yaml
 *.md
+# Dev/CI — not needed in runtime image
+tests/
+docs/
+k8s/
+fixes/
+scripts/
+requirements-dev.txt
+.github/
