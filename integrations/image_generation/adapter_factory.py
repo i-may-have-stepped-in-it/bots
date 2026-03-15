@@ -99,11 +99,9 @@ def create_adapter_from_config(config: Dict[str, Any]) -> BaseImageAdapter:
         # Use ComfyUI URL if available, fallback to default SDURL
         comfy_url = config.get("SDComfyURL")
         current_sdurl = config.get("SDURL")
-        logging.info(f"DEBUG: Before - SDURL={current_sdurl}, SDComfyURL={comfy_url}")
+        logging.debug(f"ComfyUI URL resolution: SDURL={current_sdurl}, SDComfyURL={comfy_url}")
         if comfy_url:
             config["SDURL"] = comfy_url
-            new_sdurl = config.get("SDURL")
-            logging.info(f"DEBUG: After - SDURL={new_sdurl}")
             logging.info(f"Using ComfyUI URL: {comfy_url}")
     elif backend_lower in ["invokeai", "invoke"]:
         # Use InvokeAI URL if available, fallback to default SDURL
