@@ -59,11 +59,24 @@ def get_models_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[Mode
             ModelTier.UNCENSORED: defaults.uncensored_model,
         }
     
-    router_config = config.get("model_router", {})
+    router_config = config.get("model_router")
+    if hasattr(router_config, 'intelligence_model'):
+        # ModelRouterConfig Pydantic object — use attribute access
+        return {
+            ModelTier.INTELLIGENCE: router_config.intelligence_model or defaults.intelligence_model,
+            ModelTier.HIGHSPEED: router_config.highspeed_model or defaults.highspeed_model,
+            ModelTier.UNCENSORED: router_config.uncensored_model or defaults.uncensored_model,
+        }
+    elif isinstance(router_config, dict):
+        return {
+            ModelTier.INTELLIGENCE: router_config.get("intelligence_model", defaults.intelligence_model),
+            ModelTier.HIGHSPEED: router_config.get("highspeed_model", defaults.highspeed_model),
+            ModelTier.UNCENSORED: router_config.get("uncensored_model", defaults.uncensored_model),
+        }
     return {
-        ModelTier.INTELLIGENCE: router_config.get("intelligence_model", defaults.intelligence_model),
-        ModelTier.HIGHSPEED: router_config.get("highspeed_model", defaults.highspeed_model),
-        ModelTier.UNCENSORED: router_config.get("uncensored_model", defaults.uncensored_model),
+        ModelTier.INTELLIGENCE: defaults.intelligence_model,
+        ModelTier.HIGHSPEED: defaults.highspeed_model,
+        ModelTier.UNCENSORED: defaults.uncensored_model,
     }
 
 
@@ -81,11 +94,24 @@ def get_fallback_chains_from_config(config: Optional[Dict[str, Any]] = None) -> 
             ModelTier.UNCENSORED: list(defaults.uncensored_fallbacks),
         }
     
-    router_config = config.get("model_router", {})
+    router_config = config.get("model_router")
+    if hasattr(router_config, 'intelligence_fallbacks'):
+        # ModelRouterConfig Pydantic object — use attribute access
+        return {
+            ModelTier.INTELLIGENCE: list(router_config.intelligence_fallbacks or defaults.intelligence_fallbacks),
+            ModelTier.HIGHSPEED: list(router_config.highspeed_fallbacks or defaults.highspeed_fallbacks),
+            ModelTier.UNCENSORED: list(router_config.uncensored_fallbacks or defaults.uncensored_fallbacks),
+        }
+    elif isinstance(router_config, dict):
+        return {
+            ModelTier.INTELLIGENCE: router_config.get("intelligence_fallbacks", list(defaults.intelligence_fallbacks)),
+            ModelTier.HIGHSPEED: router_config.get("highspeed_fallbacks", list(defaults.highspeed_fallbacks)),
+            ModelTier.UNCENSORED: router_config.get("uncensored_fallbacks", list(defaults.uncensored_fallbacks)),
+        }
     return {
-        ModelTier.INTELLIGENCE: router_config.get("intelligence_fallbacks", list(defaults.intelligence_fallbacks)),
-        ModelTier.HIGHSPEED: router_config.get("highspeed_fallbacks", list(defaults.highspeed_fallbacks)),
-        ModelTier.UNCENSORED: router_config.get("uncensored_fallbacks", list(defaults.uncensored_fallbacks)),
+        ModelTier.INTELLIGENCE: list(defaults.intelligence_fallbacks),
+        ModelTier.HIGHSPEED: list(defaults.highspeed_fallbacks),
+        ModelTier.UNCENSORED: list(defaults.uncensored_fallbacks),
     }
 
 

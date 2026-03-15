@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import re
-import json
 import io
 import discord
 import aiohttp
@@ -92,30 +91,19 @@ def parse_prompt(prompt, bot_name, config):
 		# Remove "--upscale" from the prompt
 		prompt = prompt.replace("--upscale", "").strip()
 
-		additional_instructions = [
-			{
-				'role': 'system',
-				'content': {
-					'SDOpenAI': config.get("SDOpenAI", "")
-				}
-			}
-		]
+		sd_instruction = config.get("SDOpenAI", "")
 
 		prompt = re.sub(r'\b{}\b'.format(re.escape(bot_name)), '', prompt, flags=re.IGNORECASE).strip()
-		# Log the prompt after removing bot's name
-		logging.debug("Prompt after removing bot's name:")
-		logging.debug(prompt)
+		logging.debug("Prompt after removing bot's name: %s", prompt)
 
 		logging.info("Prompt parsed successfully.")
-		
-		# **Ensure prompt is always a list**
-		prompt = [prompt] 
-		
-		# Construct prompt with additional_instructions, appearance_info, and prompt
-		prompt = json.dumps(additional_instructions) + " " + " ".join(prompt)
+
+		# Prepend SD instruction as plain text so the LLM receives it as natural context
+		if sd_instruction:
+			prompt = sd_instruction + prompt
+
 		logging.info(prompt)
-		
-		return prompt, upscale, additional_instructions
+		return prompt, upscale, []
 	except Exception as e:
 		logging.error("An error occurred during prompt parsing: " + str(e))
 		return "", upscale, []  # Return an empty list for additional_instructions
