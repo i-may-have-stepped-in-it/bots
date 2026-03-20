@@ -10,6 +10,8 @@ import base64
 import io
 import logging
 from typing import Dict, Any, Optional, List
+
+import aiohttp
 from PIL import Image
 
 from integrations.image_generation.base_adapter import BaseImageAdapter
@@ -143,17 +145,30 @@ class InvokeAIAdapter(BaseImageAdapter):
             raise ValueError(error_msg) from e
     
     def _extract_image_from_item(self, item: Dict[str, Any]) -> bytes:
-        """Extract image data from an InvokeAI response item."""
+        """Extract image data from an InvokeAI response item.
+
+        Handles three formats InvokeAI may return:
+        - ``image``: raw base64 string (fastest path)
+        - ``image_url``: absolute URL to fetch synchronously via urllib
+        - ``image_name``: image filename served from the InvokeAI /api/v1/images/{name}/full endpoint
+        """
         if "image" in item:
             return base64.b64decode(item["image"])
-        elif "image_url" in item:
-            # Image URL provided - would need to fetch separately
-            raise ValueError("Image URL response not yet implemented - requires separate fetch")
-        elif "image_name" in item:
-            # Image name provided - would need to fetch via image endpoint
-            raise ValueError("Image name response not yet implemented - requires separate fetch")
-        else:
-            raise ValueError("No image data found in response item")
+
+        if "image_url" in item:
+            url = item["image_url"]
+            import urllib.request
+            with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310
+                return resp.read()
+
+        if "image_name" in item:
+            name = item["image_name"]
+            url = f"{self.get_base_url()}/api/v1/images/{name}/full"
+            import urllib.request
+            with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310
+                return resp.read()
+
+        raise ValueError(f"No image data found in response item. Keys: {list(item.keys())}")
     
     def get_options_endpoint(self) -> str:
         """Return the app config endpoint URL."""

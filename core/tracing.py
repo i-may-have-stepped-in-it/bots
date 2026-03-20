@@ -255,26 +255,37 @@ class Tracer:
             
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
+                # Save context before creating child span so we can always restore it.
+                parent_span_id = current_span_id.get()
                 span_id = self.start_span(span_name, service)
+                exc_to_raise = None
+                result = None
                 try:
                     # Extract useful attributes from args
                     sig = inspect.signature(func)
                     bound = sig.bind(*args, **kwargs)
                     bound.apply_defaults()
-                    
+
                     for param_name, value in bound.arguments.items():
                         if param_name in ['user_id', 'message', 'command']:
                             self.add_attribute(param_name, str(value)[:100], span_id)
-                    
+
                     result = await func(*args, **kwargs)
                     self.end_span(span_id, SpanStatus.SUCCESS)
-                    return result
                 except Exception as e:
+                    exc_to_raise = e
                     self.end_span(span_id, SpanStatus.ERROR, str(e))
-                    raise
-            
+                finally:
+                    # Guarantee context is restored even if end_span has a bug.
+                    if current_span_id.get() == span_id:
+                        current_span_id.set(parent_span_id)
+                if exc_to_raise is not None:
+                    raise exc_to_raise
+                return result
+
             @functools.wraps(func)
             def sync_wrapper(*args, **kwargs):
+                parent_span_id = current_span_id.get()
                 span_id = self.start_span(span_name, service)
                 try:
                     result = func(*args, **kwargs)
@@ -283,6 +294,9 @@ class Tracer:
                 except Exception as e:
                     self.end_span(span_id, SpanStatus.ERROR, str(e))
                     raise
+                finally:
+                    if current_span_id.get() == span_id:
+                        current_span_id.set(parent_span_id)
             
             return async_wrapper if inspect.iscoroutinefunction(func) else sync_wrapper
         return decorator

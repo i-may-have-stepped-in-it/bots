@@ -5,74 +5,79 @@ import io
 import discord
 import aiohttp
 import base64
-import time
-import threading
 import copy
-from utils.utility_functions import *
+from utils.utility_functions import (
+    generate_response,
+    try_generate_response,
+)
 from utils.model_router import detect_uncensored_content
 from PIL import Image
 from utils.ssl_config import SSLConfigManager
 from integrations.image_generation import create_adapter_from_config, PromptFormatter, ComfyUIAdapter, InvokeAIAdapter
 from core.tracing import get_tracer, SpanStatus
+from core.service_health import ServiceRegistry
+from utils.rate_limiter import RateLimiterManager
 
 tracer = get_tracer()
-
-# Shared token bucket for rate limiting (module-level singleton)
-_image_rate_limiter = None
-_image_rate_limiter_lock = threading.Lock()
-
-def get_image_rate_limiter():
-	"""Get or create the shared TokenBucket for image generation."""
-	global _image_rate_limiter
-	if _image_rate_limiter is None:
-		with _image_rate_limiter_lock:
-			if _image_rate_limiter is None:
-				_image_rate_limiter = TokenBucket(capacity=3, refill_rate=0.5)
-	return _image_rate_limiter
-
-# Import shared rate limiter
-from utils.rate_limiter import TokenBucket
+_rate_manager = RateLimiterManager()
 
 
 async def handle_image_generation(config, message, user_message_histories, bot, draw_msg):
 	try:
-		
-		bucket = get_image_rate_limiter()
 		channel = message.channel
+		user_id = message.author.id
+
+		# --- Service health gate ---
+		sd_health = ServiceRegistry.get("sd_backend")
+		if not sd_health.is_available:
+			wait = sd_health.wait_seconds()
+			await draw_msg.edit(
+				content=f"Image generation is temporarily unavailable. Please try again in ~{wait:.0f}s."
+			)
+			logging.warning("SD backend unavailable, skipping image generation")
+			return
+
+		# --- Per-user rate limiting (power users bypass) ---
+		is_power_user = hasattr(config, 'is_power_user') and config.is_power_user(user_id)
+		if not is_power_user:
+			rate_limit = getattr(getattr(config, 'video', None), 'rate_limit_per_minute', None) or config.get("VideoRateLimit", 3)
+			bucket = _rate_manager.get_user_limiter(user_id, rate_limit)
+			if not bucket.consume(1):
+				wait = _rate_manager.wait_seconds_for_user(user_id, rate_limit)
+				await draw_msg.edit(
+					content=f"You're generating images too quickly. Please try again in ~{wait:.0f}s."
+				)
+				logging.info(f"Image rate-limited for user {user_id}")
+				return
+
 		async with channel.typing():
-			if bucket.consume(1):
-				logging.info(f"Enough bucket tokens exist, running image generation for message: {message.content}")
-				bot_name = config["Name"]
-				prompt, upscale, additional_instructions = parse_prompt(message.content, bot_name, config)
+			logging.info(f"Running image generation for message: {message.content}")
+			bot_name = config["Name"]
+			prompt, upscale, additional_instructions = parse_prompt(message.content, bot_name, config)
 
+			logging.info("Parsed prompt in handle_image_generation:")
+			logging.debug(prompt)
 
-				# Log the parsed prompt
-				logging.info("Parsed prompt in handle_image_generation:")
-				logging.debug(prompt)
+			# Check and load the current model
+			sd_model_checkpoint = await check_current_model(config, message, draw_msg)
 
-				# Check and load the current model
-				sd_model_checkpoint = await check_current_model(config, message,draw_msg)
+			if sd_model_checkpoint:
+				# Generate response using OpenAI API
+				openai_response = await generate_openai_response(config, user_id, user_message_histories, message, prompt, upscale, additional_instructions)
+				logging.debug(openai_response)
 
-				# Proceed only if the model is successfully loaded
-				if sd_model_checkpoint:
-					# Generate response using OpenAI API
-					openai_response = await generate_openai_response(config, message.author.id, user_message_histories, message, prompt, upscale, additional_instructions)
-					logging.debug(openai_response)
+				# Generate image
+				image = await generate_image(config, openai_response, upscale)
 
-					# Generate image
-					image = await generate_image(config, openai_response, upscale)
-
-					# Send image response
-					await send_image_response(message, image, openai_response, draw_msg, prompt=prompt)
-				else:
-					await draw_msg.edit("Failed to fetch the model. Please try again later.")
-					logging.error("Failed to fetch the model. Skipping image generation.")
-				logging.info(f"Remaining tokens after consumption: {bucket.tokens}")
+				# Send image response
+				await send_image_response(message, image, openai_response, draw_msg, prompt=prompt)
+				sd_health.mark_success()
 			else:
-				await draw_msg.edit("I'm busy sketching for you. Please wait until I finish this one before asking for another.")
-				logging.info("Image drawing throttled. Skipping draw request")
+				await draw_msg.edit("Failed to fetch the model. Please try again later.")
+				logging.error("Failed to fetch the model. Skipping image generation.")
 	except Exception as e:
 		logging.error("An error occurred during image generation: " + str(e))
+		ServiceRegistry.get("sd_backend").mark_failure(str(e))
 		await draw_msg.edit(content="I'm sorry, I was not able to do that for you. Please try again")
 		pass
 
@@ -116,7 +121,7 @@ async def generate_openai_response(config, user_id, user_message_histories, mess
 		is_nsfw = detect_uncensored_content(prompt_text)
 		
 		if is_nsfw:
-			logging.info("NSFW content detected in image prompt, using uncensored model for SD prompt generation")
+			logging.info("Explicit content detected in image prompt — routing to uncensored model for SD prompt generation")
 			# Create a copy of config to avoid modifying the original
 			config_copy = copy.deepcopy(config)
 			# Get uncensored model from config or use default
@@ -280,9 +285,11 @@ async def _make_api_call_automatic1111(adapter, config, json_payload):
 					
 	except aiohttp.ClientError as e:
 		logging.error(f"HTTP error occurred: {e}")
+		ServiceRegistry.get("sd_backend").mark_failure(str(e))
 		return None
 	except asyncio.TimeoutError:
 		logging.error("Timeout waiting for image generation")
+		ServiceRegistry.get("sd_backend").mark_failure("timeout")
 		return None
 	except Exception as e:
 		logging.error(f"An error occurred: {e}")

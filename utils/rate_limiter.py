@@ -86,7 +86,33 @@ class RateLimiterManager:
         if name not in self._limiters:
             self._limiters[name] = TokenBucket(capacity, refill_rate)
         return self._limiters[name]
-    
+
+    def get_user_limiter(self, user_id: int, requests_per_minute: float) -> TokenBucket:
+        """Get or create a per-user rate limiter for image generation.
+
+        Args:
+            user_id: Discord user ID
+            requests_per_minute: Allowed requests per minute for this user
+
+        Returns:
+            TokenBucket scoped to this user
+        """
+        capacity = max(1.0, requests_per_minute)
+        refill_rate = capacity / 60.0
+        return self.get_limiter(f"image_user_{user_id}", capacity, refill_rate)
+
+    def wait_seconds_for_user(self, user_id: int, requests_per_minute: float) -> float:
+        """Approximate seconds until the user's bucket has 1 token.
+
+        Returns 0 if the user is not rate-limited.
+        """
+        bucket = self.get_user_limiter(user_id, requests_per_minute)
+        tokens = bucket.get_tokens()
+        if tokens >= 1.0:
+            return 0.0
+        deficit = 1.0 - tokens
+        return deficit / bucket.refill_rate
+
     def reset(self, name: Optional[str] = None):
         """Reset a specific limiter or all limiters."""
         if name:

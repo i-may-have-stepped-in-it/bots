@@ -88,30 +88,33 @@ def create_adapter_from_config(config: Dict[str, Any]) -> BaseImageAdapter:
         An instance of the appropriate BaseImageAdapter subclass
     """
     backend = config.get("SDBackend", "automatic1111")
-    
+
     if not backend:
         logging.warning("SDBackend not specified in config, defaulting to 'automatic1111'")
         backend = "automatic1111"
-    
+
+    # Work on a shallow copy so we never mutate the caller's config object.
+    # (Pydantic models support model_copy(); plain dicts support .copy().)
+    try:
+        effective_config = config.model_copy()
+    except AttributeError:
+        effective_config = dict(config)
+
     # Select the appropriate URL based on backend
     backend_lower = backend.lower()
     if backend_lower in ["comfyui", "comfy"]:
-        # Use ComfyUI URL if available, fallback to default SDURL
         comfy_url = config.get("SDComfyURL")
-        current_sdurl = config.get("SDURL")
-        logging.debug(f"ComfyUI URL resolution: SDURL={current_sdurl}, SDComfyURL={comfy_url}")
+        logging.debug(f"ComfyUI URL resolution: SDURL={config.get('SDURL')}, SDComfyURL={comfy_url}")
         if comfy_url:
-            config["SDURL"] = comfy_url
+            effective_config["SDURL"] = comfy_url
             logging.info(f"Using ComfyUI URL: {comfy_url}")
     elif backend_lower in ["invokeai", "invoke"]:
-        # Use InvokeAI URL if available, fallback to default SDURL
         invoke_url = config.get("SDInvokeURL")
         if invoke_url:
-            config["SDURL"] = invoke_url
+            effective_config["SDURL"] = invoke_url
             logging.info(f"Using InvokeAI URL: {invoke_url}")
-    # For automatic1111, use the default SDURL
-    
-    return create_adapter(backend, config)
+
+    return create_adapter(backend, effective_config)
 
 
 def register_adapter(

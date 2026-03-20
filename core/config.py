@@ -3,19 +3,23 @@ Pydantic-based configuration management for Jennifer.
 Replaces the messy dict-based config with validated, typed settings.
 """
 
+import asyncio
 import json
+import logging
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 from pydantic import BaseModel, Field, validator
+
+logger = logging.getLogger(__name__)
 
 
 class SDConfig(BaseModel):
     """Stable Diffusion configuration."""
     backend: str = "automatic1111"  # automatic1111, comfyui, invokeai
-    url: str = "http://josh-asus-1.tail36566.ts.net:7860"  # Default/main SD URL
-    comfy_url: str = "http://josh-asus-1.tail36566.ts.net:8188"  # ComfyUI URL
-    invoke_url: str = "http://josh-asus-1.tail36566.ts.net:9090"  # InvokeAI URL
+    url: str = Field(default_factory=lambda: os.getenv("SD_URL", ""))
+    comfy_url: str = Field(default_factory=lambda: os.getenv("SD_COMFY_URL", ""))
+    invoke_url: str = Field(default_factory=lambda: os.getenv("SD_INVOKE_URL", ""))
     model: str = "cyberrealistic_classic40"
     clip_skip: int = 0
     cfg_scale: float = 7.0
@@ -31,7 +35,7 @@ class SDConfig(BaseModel):
 
 class OpenClawConfig(BaseModel):
     """OpenClaw gateway configuration."""
-    gateway: str = "https://vmi3115281.tail36566.ts.net/"
+    gateway: str = Field(default_factory=lambda: os.getenv("OPENCLAW_GATEWAY", ""))
     token: str = ""
     device_token: str = ""
     device_identity_path: str = ""
@@ -42,9 +46,9 @@ class OpenClawConfig(BaseModel):
     context_window: int = 10240
     embedding: str = "text-embedding-ada-002"
     embedding_dim: int = 1024
-    embedding_endpoint: str = "http://josh-asus-4.tail36566.ts.net:38078/v1"
+    embedding_endpoint: str = Field(default_factory=lambda: os.getenv("OPENCLAW_EMBEDDING_ENDPOINT", ""))
     embedding_endpoint_type: str = "openai"
-    model_endpoint: str = "http://josh-asus-4.tail36566.ts.net:38078/v1"
+    model_endpoint: str = Field(default_factory=lambda: os.getenv("OPENCLAW_MODEL_ENDPOINT", ""))
     model_endpoint_type: str = "openai"
     personality: str = ""
     system_prompt: str = ""
@@ -228,9 +232,9 @@ class JenniferConfig(BaseModel):
             ignored_words=raw.get("IgnoredWords", []),
             sd=SDConfig(
                 backend=raw.get("SDBackend", "automatic1111"),
-                url=raw.get("SDURL", "http://josh-asus-1.tail36566.ts.net:7860"),
-                comfy_url=raw.get("SDComfyURL", "http://josh-asus-1.tail36566.ts.net:8188"),
-                invoke_url=raw.get("SDInvokeURL", "http://josh-asus-1.tail36566.ts.net:9090"),
+                url=raw.get("SDURL", os.getenv("SD_URL", "")),
+                comfy_url=raw.get("SDComfyURL", os.getenv("SD_COMFY_URL", "")),
+                invoke_url=raw.get("SDInvokeURL", os.getenv("SD_INVOKE_URL", "")),
                 model=raw.get("SDmodel", "cyberrealistic_classic40"),
                 clip_skip=raw.get("SDClipSkip", 0),
                 cfg_scale=raw.get("SDConfig", 7.0),
@@ -244,7 +248,7 @@ class JenniferConfig(BaseModel):
                 openai_prompt=raw.get("SDOpenAI", ""),
             ),
             openclaw=OpenClawConfig(
-                gateway=raw.get("OpenClawGateway", ""),
+                gateway=raw.get("OpenClawGateway", os.getenv("OPENCLAW_GATEWAY", "")),
                 token=raw.get("OpenClawToken", ""),
                 device_token=raw.get("OpenClawDeviceToken", ""),
                 device_identity_path=raw.get("OpenClawDeviceIdentityPath", ""),
@@ -255,9 +259,9 @@ class JenniferConfig(BaseModel):
                 context_window=raw.get("OpenClawContextWindow", 10240),
                 embedding=raw.get("OpenClawEmbedding", "text-embedding-ada-002"),
                 embedding_dim=raw.get("OpenClawEmbeddingDim", 1024),
-                embedding_endpoint=raw.get("OpenClawEmbeddingEndpoint", ""),
+                embedding_endpoint=raw.get("OpenClawEmbeddingEndpoint", os.getenv("OPENCLAW_EMBEDDING_ENDPOINT", "")),
                 embedding_endpoint_type=raw.get("OpenClawEmbeddingEndpointType", "openai"),
-                model_endpoint=raw.get("OpenClawModelEndpoint", ""),
+                model_endpoint=raw.get("OpenClawModelEndpoint", os.getenv("OPENCLAW_MODEL_ENDPOINT", "")),
                 model_endpoint_type=raw.get("OpenClawModelEndpointType", "openai"),
                 personality=raw.get("OpenClawPersonality", raw.get("OpenClawPersona", "")),
                 system_prompt=raw.get("OpenClawSystemPrompt", ""),
@@ -518,3 +522,67 @@ def reload_config(path: str = "config/config.json") -> JenniferConfig:
     global _config
     _config = JenniferConfig.load(path)
     return _config
+
+
+async def watch_config(
+    path: str,
+    callback: Callable[["JenniferConfig"], None],
+    poll_interval: float = 5.0,
+) -> None:
+    """Watch a config file for changes and invoke callback on reload.
+
+    Polls the file's mtime every *poll_interval* seconds.  On a detected
+    change it attempts to reload and calls *callback(new_config)*.  Errors
+    in the JSON / validation are logged but do not crash the watcher — the
+    previous config stays active until a valid file is saved.
+
+    Note: Discord token and queue-backend settings cannot be hot-applied
+    (they require a full reconnect).  The callback in bot/client.py skips
+    those fields intentionally.
+
+    Args:
+        path: Absolute or relative path to config.json.
+        callback: Async-compatible callable that receives the new config.
+        poll_interval: Seconds between mtime checks (default 5).
+    """
+    config_path = Path(path)
+    try:
+        last_mtime = config_path.stat().st_mtime
+    except FileNotFoundError:
+        logger.error(f"watch_config: file not found: {path}")
+        return
+
+    logger.info(f"Config watcher started for {path} (poll every {poll_interval}s)")
+
+    while True:
+        await asyncio.sleep(poll_interval)
+        try:
+            current_mtime = config_path.stat().st_mtime
+            if current_mtime == last_mtime:
+                continue
+            last_mtime = current_mtime
+            logger.info(f"Config file changed — reloading {path}")
+            try:
+                new_config = JenniferConfig.load(path)
+            except Exception as parse_err:
+                logger.error(
+                    f"Config reload failed (keeping previous config): {parse_err}"
+                )
+                continue
+
+            # Update the global singleton so load_config() callers also see the change
+            global _config
+            _config = new_config
+
+            try:
+                result = callback(new_config)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception as cb_err:
+                logger.error(f"Config reload callback raised an error: {cb_err}")
+
+        except asyncio.CancelledError:
+            logger.info("Config watcher cancelled")
+            break
+        except Exception as e:
+            logger.warning(f"Config watcher encountered an error: {e}")

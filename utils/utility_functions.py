@@ -7,6 +7,11 @@ import os
 from openai import AsyncOpenAI
 from utils.openclaw import generate_openclaw_response
 
+__all__ = [
+    "generate_response",
+    "try_generate_response",
+]
+
 discord.opus._load_default()
 
 
