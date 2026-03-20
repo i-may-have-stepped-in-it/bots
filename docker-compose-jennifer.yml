@@ -1,0 +1,462 @@
+name: jennifer
+
+# =============================================================================
+# PROFILE ORGANIZATION
+# =============================================================================
+# 
+# SD Backend Profiles (choose one):
+#   - sd-a1111-nvidia    : Automatic1111 with NVIDIA GPU
+#   - sd-a1111-cpu       : Automatic1111 CPU-only
+#   - sd-comfyui-nvidia  : ComfyUI with NVIDIA GPU
+#   - sd-comfyui-cpu     : ComfyUI CPU-only
+#   - sd-invokeai-nvidia : InvokeAI with NVIDIA GPU
+#   - sd-invokeai-cpu    : InvokeAI CPU-only
+#
+# Text Backend Profiles (choose one):
+#   - llm-nvidia         : LocalAI with NVIDIA GPU
+#   - llm-intel          : LocalAI with Intel GPU
+#   - llm-cpu            : LocalAI CPU-only
+#
+# Convenience Profiles:
+#   - all                : Everything with NVIDIA GPU (full stack)
+#   - all-cpu            : Everything CPU-only
+#   - setup              : One-time setup tasks
+#
+# Usage Examples:
+#   docker-compose --profile sd-comfyui-nvidia --profile llm-nvidia up -d
+#   docker-compose --profile all up -d
+#   docker-compose --profile sd-a1111-nvidia up -d
+# =============================================================================
+
+services:
+  init:
+    image: busybox
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./logs:/app/logs
+    command: >
+      sh -c "
+        chown -R 1000:1000 /app/config /app/data /app/logs &&
+        chmod 755 /app/data /app/logs
+      "
+    profiles: 
+      - setup
+      - sd-a1111-nvidia
+      - sd-a1111-cpu
+      - sd-comfyui-nvidia
+      - sd-comfyui-cpu
+      - sd-invokeai-nvidia
+      - sd-invokeai-cpu
+      - llm-nvidia
+      - llm-intel
+      - llm-cpu
+      - all
+      - all-cpu
+    deploy:
+      mode: "replicated"
+      replicas: 1
+      restart_policy:
+        condition: none
+
+  # ===========================================================================
+  # Main Bot Service
+  # ===========================================================================
+  jennifer:
+    user: "1000:1000"
+    image: idacat411/app:latest
+    container_name: jennifer
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: host
+    profiles:
+      # Individual SD backends
+      - sd-a1111-nvidia
+      - sd-a1111-cpu
+      - sd-comfyui-nvidia
+      - sd-comfyui-cpu
+      - sd-invokeai-nvidia
+      - sd-invokeai-cpu
+      # Text backends (bot-only mode - no SD)
+      - llm-nvidia
+      - llm-intel
+      - llm-cpu
+      # Convenience profiles
+      - all
+      - all-cpu
+      - bot-only
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: '10m'
+    volumes:
+      - ./config/:/app/config/
+      - ./nltk_data:/home/appuser/nltk_data
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TQDM_DISABLE=1
+      - PYTHONUNBUFFERED=1
+      - ENABLE_TRACING=true
+    tty: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/healthy') else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          memory: 2G
+
+  # ===========================================================================
+  # LLM/Text Generation Backends
+  # ===========================================================================
+  llm-nvidia:
+    container_name: jennifer-llm-nvidia
+    image: localai/localai:latest-aio-gpu-nvidia-cuda-13
+    pull_policy: always
+    restart: unless-stopped
+    profiles: 
+      - llm-nvidia
+      - all
+    environment:
+      - TQDM_DISABLE=1
+      - LLAMACPP_PARALLEL=2
+      - PYTHONUNBUFFERED=1
+    tty: true
+    privileged: false
+    ports:
+      - "127.0.0.1:38078:38078"
+    env_file:
+      - ./.env
+    volumes:
+      - /var/lib/docker/volumes/midoriai_midori-ai-models/_data:/models
+      - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/
+      - /var/lib/docker/volumes/midoriai_midori-ai-audio/_data:/tmp/generated/audio/
+      - ./.env:/build/.env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:38078/readyz"]
+      interval: 30s
+      timeout: 60s
+      retries: 3
+      start_period: 120s
+    command: [local-ai]
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 32G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [compute, utility]
+
+  llm-intel:
+    container_name: jennifer-llm-intel
+    image: lunamidori5/midori_ai_subsystem_localai_intelf16_gpu:master
+    restart: unless-stopped
+    profiles: 
+      - llm-intel
+    environment:
+      - TQDM_DISABLE=1
+      - LLAMACPP_PARALLEL=2
+    tty: true
+    devices:
+      - /dev/dri:/dev/dri
+    ports:
+      - "127.0.0.1:38078:38078"
+    env_file:
+      - intel.env
+    volumes:
+      - /var/lib/docker/volumes/midoriai_midori-ai-models/_data:/models
+      - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/
+      - /var/lib/docker/volumes/midoriai_midori-ai-audio/_data:/tmp/generated/audio/
+      - ./intel.env:/build/.env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:38078/readyz"]
+      interval: 30s
+      timeout: 60s
+      retries: 3
+      start_period: 120s
+    command: ["local-ai"]
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+
+  llm-cpu:
+    container_name: jennifer-llm-cpu
+    image: lunamidori5/localai_cpu:master
+    restart: unless-stopped
+    profiles: 
+      - llm-cpu
+      - all-cpu
+    environment:
+      - TQDM_DISABLE=1
+      - LLAMACPP_PARALLEL=1
+    tty: true
+    ports:
+      - "127.0.0.1:38078:38078"
+    env_file:
+      - .env
+    volumes:
+      - /var/lib/docker/volumes/midoriai_midori-ai-models/_data:/models
+      - /var/lib/docker/volumes/midoriai_midori-ai-images/_data:/tmp/generated/images/
+      - /var/lib/docker/volumes/midoriai_midori-ai-audio/_data:/tmp/generated/audio/
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:38078/readyz"]
+      interval: 30s
+      timeout: 60s
+      retries: 3
+      start_period: 60s
+    command: ["local-ai"]
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+
+  # ===========================================================================
+  # Stable Diffusion - Automatic1111
+  # ===========================================================================
+  sd-a1111-nvidia:
+    container_name: jennifer-sd-a1111-nvidia
+    image: idacat411/stable-diffusion:latest
+    pull_policy: always
+    restart: unless-stopped
+    profiles: 
+      - sd-a1111-nvidia
+      - all
+    environment:
+      - CLI_ARGS=--allow-code --enable-insecure-extension-access --api --xformers --medvram --no-half-vae
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      - NVIDIA_VISIBLE_DEVICES=all
+    ports:
+      - "7860:7860"
+    volumes:
+      - ../data:/data
+      - ../output:/output
+      - ./config/sd-webui:/data/config/auto
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/sdapi/v1/memory"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [compute, utility]
+
+  sd-a1111-cpu:
+    container_name: jennifer-sd-a1111-cpu
+    image: idacat411/stable-diffusion:latest-cpu
+    pull_policy: always
+    restart: unless-stopped
+    profiles: 
+      - sd-a1111-cpu
+      - all-cpu
+    environment:
+      - CLI_ARGS=--allow-code --enable-insecure-extension-access --api --skip-torch-cuda-test --use-cpu all --no-half --precision full
+    ports:
+      - "7860:7860"
+    volumes:
+      - ../data:/data
+      - ../output:/output
+      - ./config/sd-webui:/data/config/auto
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/sdapi/v1/memory"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+
+  # ===========================================================================
+  # Stable Diffusion - ComfyUI
+  # ===========================================================================
+  sd-comfyui-nvidia:
+    container_name: jennifer-sd-comfyui-nvidia
+    image: yanwk/comfyui-boot:cu128-slim
+    pull_policy: always
+    restart: unless-stopped
+    profiles: 
+      - sd-comfyui-nvidia
+      - all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+    ports:
+      - "8188:8188"
+    volumes:
+      - ../data/comfyui:/root/ComfyUI
+      - ../data/models/Stable-diffusion:/root/ComfyUI/models/checkpoints:ro
+      - ../data/models/VAE:/root/ComfyUI/models/vae:ro
+      - ../data/models/Lora:/root/ComfyUI/models/loras:ro
+      - ../data/models/ControlNet:/root/ComfyUI/models/controlnet:ro
+      - ../data/models/ESRGAN:/root/ComfyUI/models/upscale_models:ro
+      - ../data/embeddings:/root/ComfyUI/models/embeddings:ro
+      - ../output:/root/ComfyUI/output
+      - ../data/comfyui/custom_nodes:/root/ComfyUI/custom_nodes
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8188/system_stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [compute, utility]
+
+  sd-comfyui-cpu:
+    container_name: jennifer-sd-comfyui-cpu
+    image: yanwk/comfyui-boot:cpu
+    pull_policy: always
+    restart: unless-stopped
+    profiles: 
+      - sd-comfyui-cpu
+      - all-cpu
+    ports:
+      - "8188:8188"
+    volumes:
+      - ../data/comfyui:/root/ComfyUI
+      - ../data/models/Stable-diffusion:/root/ComfyUI/models/checkpoints:ro
+      - ../data/models/VAE:/root/ComfyUI/models/vae:ro
+      - ../data/models/Lora:/root/ComfyUI/models/loras:ro
+      - ../data/models/ControlNet:/root/ComfyUI/models/controlnet:ro
+      - ../data/models/ESRGAN:/root/ComfyUI/models/upscale_models:ro
+      - ../data/embeddings:/root/ComfyUI/models/embeddings:ro
+      - ../output:/root/ComfyUI/output
+      - ../data/comfyui/custom_nodes:/root/ComfyUI/custom_nodes
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8188/system_stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+
+  # ===========================================================================
+  # Stable Diffusion - InvokeAI
+  # ===========================================================================
+  sd-invokeai-nvidia:
+    container_name: jennifer-sd-invokeai-nvidia
+    image: ghcr.io/invoke-ai/invokeai:latest
+    pull_policy: always
+    restart: unless-stopped
+    profiles: 
+      - sd-invokeai-nvidia
+      - all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - INVOKEAI_ROOT=/invokeai
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../data/invokeai:/invokeai
+      - ../data/models:/invokeai/models-import:ro
+      - ../data/models/Stable-diffusion:/invokeai/models/sd-main:ro
+      - ../data/models/VAE:/invokeai/models/vae:ro
+      - ../data/models/Lora:/invokeai/models/lora:ro
+      - ../data/models/ControlNet:/invokeai/models/controlnet:ro
+      - ../output:/invokeai/outputs
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/v1/app/config"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [compute, utility]
+
+  sd-invokeai-cpu:
+    container_name: jennifer-sd-invokeai-cpu
+    image: ghcr.io/invoke-ai/invokeai:latest-cpu
+    pull_policy: always
+    restart: unless-stopped
+    profiles: 
+      - sd-invokeai-cpu
+      - all-cpu
+    environment:
+      - INVOKEAI_ROOT=/invokeai
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../data/invokeai:/invokeai
+      - ../data/models:/invokeai/models-import:ro
+      - ../data/models/Stable-diffusion:/invokeai/models/sd-main:ro
+      - ../data/models/VAE:/invokeai/models/vae:ro
+      - ../data/models/Lora:/invokeai/models/lora:ro
+      - ../data/models/ControlNet:/invokeai/models/controlnet:ro
+      - ../output:/invokeai/outputs
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/v1/app/config"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+
+  # ===========================================================================
+  # Utilities
+  # ===========================================================================
+  download:
+    build: ../services/download/
+    profiles: [download]
+    volumes:
+      - ../data:/data

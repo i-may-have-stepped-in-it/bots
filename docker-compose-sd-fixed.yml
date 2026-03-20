@@ -1,0 +1,44 @@
+# Fixed stable-diffusion service with better compatibility
+# Merge this into your main docker-compose-jennifer.yml
+
+services:
+  stable-diffusion-jennifer:
+    container_name: stable-diffusion-jennifer
+    build: 
+      context: ../services/AUTOMATIC1111
+      dockerfile: Dockerfile
+    image: idacat411/stable-diffusion:latest
+    restart: unless-stopped
+    tty: true
+    environment:
+      - CLI_ARGS=--allow-code --enable-insecure-extension-access --api --xformers --medvram --no-half-vae
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    ports:
+      - "127.0.0.1:7860:7860"
+    volumes:
+      - ../data:/data
+      - ../output:/output
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    profiles: [nvidia]
+    # Option A: For Docker Compose 2.3.0+ with GPU support
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [compute, utility]
+    # Option B: For older Docker Compose (uncomment if Option A fails)
+    # runtime: nvidia
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/sdapi/v1/memory"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s  # Increased for model loading time

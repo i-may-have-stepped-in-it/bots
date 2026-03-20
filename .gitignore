@@ -1,0 +1,33 @@
+**/*config.json*
+*_message_histories_*
+**/*.log*
+**/*.pyc
+.vscode/
+vision*
+jennifer_localai/
+comfy*
+workflow_*
+!config.json.template
+.env
+.devcontainer/
+function storage.py
+set_python_env.sh
+**/jaunch.json
+Jennifer_message_histories.json
+nltk_data/
+nltk_data/
+config/memgpt_user_data.json
+/letta/.persist/
+.env
+intel.env
+# Runtime secrets and local data
+config/
+data/
+
+# Identity and key material
+*device-identity*
+*-identity.json
+*.pem
+*_private_key*
+*privatekey*
+k8s/secret.yaml
