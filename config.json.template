@@ -1,0 +1,146 @@
+{
+    "LogLevel": "INFO",
+    "DiscordToken": "",
+    "AllowDMResponses": false,
+    "AllowedDMUsers": [],
+    "Power_Users": [],
+    "InteractionTimeout": 60,
+    "RespondToMentions": true,
+    "AllowedChannels": [],
+    "IgnoredUsers": [],
+    "bot_user": [],
+    "IgnoredWords": [],
+    "TypingDelay": 1,
+    "recognizer": "whisper",
+    "History_Length": 12000,
+    "OnlyWhenCalled": true,
+    "OpenAPIEndpoint": "",
+    "OpenAPIKey": "",
+    "SecondaryOpenAPIEndpoint": "",
+    "SecondaryOpenAPIKey": "",
+    "SecondaryOpenaiModel": "",
+    "OpenaiModel": "",
+    "OpenaiCharacter": "Assistant",
+    "OpenaiTTSVoiceModel": "",
+    "OpenaiTTSBackend": "bark",
+    "SileroSpeaker": "en_107",
+    "SDBackend": "automatic1111",
+    "_comment_sdbackend": "Image generation backend: automatic1111, comfyui, or invokeai",
+    "SDURL": "http://josh-asus-1.tail36566.ts.net:7860",
+    "SDComfyURL": "http://josh-asus-1.tail36566.ts.net:8188",
+    "SDInvokeURL": "http://josh-asus-1.tail36566.ts.net:9090",
+    "SDPositivePrompt": "((best quality)), ((masterpiece)), (detailed), RAW photo, 8k uhd, Best quality,  ultra high resolution, hyper realistic, exquisite, intricate, aesthetic, beautiful, volumetric lighting, film grain, Fujifilm XT3, analog style,",
+    "SDNegativePrompt": "CyberRealistic_Negative-neg",
+    "SDSteps": 20,
+    "SDHeight": 1024,
+    "SDWidth": 512,
+    "SDConfig": 7,
+    "SDClipSkip": 0,
+    "SDSampler": "DPM++ 2M",
+    "SDScheduler": "automatic",
+    "SDmodel": "cyberrealistic_classic40",
+    "SDOpenAI": "Stable Diffusion is a deep learning text-to-image model that generates images based on prompts. These prompts can specify the desired elements of the image, such as the appearance of characters, background, color and lighting effects, as well as the theme and style of the image. Keywords are separated by commas (,), Multiple parentheses (()) add weight to details. In addition, if {} are used they represents the fusion of a description. Using the information provided, provide a prompt that details the following content. You are directly prompting Stable Diffusion, so be very detailed and specific. The more details you give the better the output will be. Start the prompts directly without using natural language to describe them: ",
+    "Name": "",
+    "Personality": "",
+    "Appearance": "",
+    "OpenClawGateway": "",
+    "OpenClawToken": "",
+    "OpenClawDeviceToken": "",
+    "OpenClawDeviceIdentityPath": "",
+    "OpenClawAgent": "",
+    "OpenClawmodel": "",
+    "OpenClawBearer": "",
+    "OpenClawEndpoint": "",
+    "OpenClawPersona": "",
+    "OpenClawPersonality": "",
+    "OpenClawModelEndpointType": "openai",
+    "OpenClawModelEndpoint": "",
+    "OpenClawtimeout": 600,
+    "OpenClawStream": false,
+    "OpenClawAsync": true,
+    "OpenClawContextWindow": 10240,
+    "OpenClawEmbedding": "",
+    "OpenClawSystemPrompt": "",
+    "OpenClawUseAssistantMessage": false,
+    "OpenClawEmbeddingDim": 1024,
+    "OpenClawEmbeddingEndpointType": "openai",
+    "OpenClawEmbeddingEndpoint": "",
+    "steps": {
+        "1": {
+            "title": "Text Description",
+            "description": "Start with a detailed textual description of the image you want to generate. This description should be as specific as possible to guide the AI in creating the image. The more descriptive your prompt, the better, as anything not specified will be randomly defined by the AI."
+        },
+        "2": {
+            "title": "Parameters",
+            "description": "After the text description,you can add weight to words by using parenteses and colon with a integer like this (cat:1.2), you can also include parameters to further specify how the image should be generated. These parameters are preceded by two hyphens (`--`).",
+            "examples": [
+                {
+                    "name": "ar",
+                    "description": "This sets the aspect ratio of the image to 3:2. Aspect ratios greater than 2:1 are experimental and may produce unpredictable results."
+                },
+                {
+                    "name": "chaos",
+                    "description": "This sets the chaos level of the image to 30. The chaos parameter controls the randomness of the image generation process. The range is 0-100."
+                },
+                {
+                    "name": "q",
+                    "description": "This sets the quality of the image to 1. The quality parameter controls how much rendering quality time you want to spend. The default value is 1. It only accepts the values: .25, .5, and 1 for the current model. Larger values are rounded down to 1. It only influences the initial image generation."
+                },
+                {
+                    "name": "stylize",
+                    "description": "This sets the stylization level of the image to 800. This parameter influences how strongly Midjourney's default aesthetic style is applied to Jobs. The range is 0-1000."
+                }
+            ]
+        },
+        "3": {
+            "title": "Exclusion",
+            "description": "If you want to exclude certain elements from the image, you can add a `--no {element}` parameter."
+        }
+    },
+    "additional_steps": {
+        "title": "Image Style",
+        "description": "Define the style of your image.",
+        "title_subject": "Subject",
+        "description_subject": "Describe each subject well. If necessary, list the number of individuals.",
+        "title_environment": "Environment",
+        "description_environment": "Put your subjects in an environment to give context to your image.",
+        "title_lighting": "Lighting",
+        "description_lighting": "Specify the time of day to guide the lighting, colors, and contrasts of the image.",
+        "title_angle_of_view": "Angle of View",
+        "description_angle_of_view": "You can specify the viewing angle of the image.",
+        "title_final_prompt": "Final Prompt",
+        "description_final_prompt": "Combine the text description, parameters, weights, and the additional elements (image style, subject, environment, lighting, angle of view) to create the final prompt. Return only the final prompt as a single line."
+    },
+    "_comment_video": "Video Generation Configuration - Supports Z.AI API (cloud) or FramePack (local)",
+    "VideoBackend": "zai",
+    "VideoRateLimit": 3,
+    "VideoMaxPromptLength": 500,
+    "_comment_zai": "Z.AI API Settings - Get API key from https://z.ai",
+    "ZaiAPIKey": "",
+    "ZaiAPIEndpoint": "https://api.z.ai/api/paas/v4",
+    "ZaiVideoModel": "CogVideoX-3",
+    "ZaiVideoResolution": "720p",
+    "ZaiVideoDuration": 5,
+    "_comment_framepack": "FramePack Local Settings - For self-hosted video generation",
+    "FramePackURL": "http://localhost:7860",
+    "FramePackModel": "FramePack (Original)",
+    "FramePackSteps": 25,
+    "FramePackWidth": 640,
+    "FramePackHeight": 480,
+    "FramePackVideoLength": 4.0,
+    "FramePackUseTeaCache": true,
+    "_comment_model_router": "Model routing configuration - defines models for different tiers",
+    "model_router": {
+        "highspeed_model": "zai/glm-4.7-flash",
+        "highspeed_fallbacks": [],
+        "intelligence_model": "moonshot/kimi-k2.5",
+        "intelligence_fallbacks": [
+            "zai/glm-4.7-flash"
+        ],
+        "uncensored_model": "venice/venice-uncensored-role-play",
+        "uncensored_fallbacks": [
+            "venice/olafangensan-glm-4.7-flash-heretic",
+            "localai/Qwen3-14B-Nexa-Uncensored"
+        ]
+    }
+}
