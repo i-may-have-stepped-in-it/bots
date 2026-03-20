@@ -1,7 +1,7 @@
 import logging
 import json
 from datetime import datetime
-from utils.utility_functions import *
+from utils.utility_functions import generate_response, try_generate_response  # noqa: F401 (try_generate_response used transitively)
 import discord
 import asyncio
 import textwrap
@@ -62,20 +62,28 @@ async def handle_message_processing(config, message, user_message_histories, his
             
             chunks = split_into_chunks(openairesponse)
             for chunk in chunks:
-                if isinstance(message.channel, discord.Thread):
-                    await message.channel.send(chunk)
-                else:
-                    await message.channel.send(chunk)
+                await message.channel.send(chunk)
                 await asyncio.sleep(0.5)
     except Exception as e:
         logging.error("An error occurred during message processing in handle_message_processing: " + str(e))
 
-def split_into_chunks(response):
-	max_length = 1900
-	chunks = []
-	lines = response.split('\n')
-	for line in lines:
-		wrapped_lines = textwrap.wrap(line, width=max_length, break_long_words=False)
-		for wrapped_line in wrapped_lines:
-			chunks.append(wrapped_line.strip())
-	return chunks
+def split_into_chunks(response, max_length: int = 2000):
+    """Split a response string into Discord-safe chunks.
+
+    Splits on newlines first, then wraps long lines at *max_length* characters
+    (Discord's hard limit).  Empty lines are preserved as empty strings so the
+    caller's ``asyncio.sleep`` pacing between chunks still applies.
+    """
+    chunks = []
+    for line in response.split('\n'):
+        if not line:
+            # Preserve blank lines in the output rhythm; send a zero-width space
+            # so Discord doesn't reject an empty message.
+            chunks.append('\u200b')
+            continue
+        if len(line) <= max_length:
+            chunks.append(line)
+        else:
+            for wrapped in textwrap.wrap(line, width=max_length, break_long_words=True):
+                chunks.append(wrapped)
+    return chunks

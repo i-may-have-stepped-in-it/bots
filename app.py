@@ -13,9 +13,15 @@ Usage:
     python app.py
 
 Environment Variables:
-    LOG_LEVEL       - Logging level (DEBUG, INFO, WARNING, ERROR)
-    CONFIG_PATH     - Path to config file (default: config/config.json)
-    ENABLE_TRACING  - Enable end-to-end tracing (default: true)
+    LOG_LEVEL                    - Logging level (DEBUG, INFO, WARNING, ERROR)
+    CONFIG_PATH                  - Path to config file (default: config/config.json)
+    ENABLE_TRACING               - Enable end-to-end tracing (default: true)
+    SD_URL                       - Stable Diffusion (A1111) base URL
+    SD_COMFY_URL                 - ComfyUI base URL
+    SD_INVOKE_URL                - InvokeAI base URL
+    OPENCLAW_GATEWAY             - OpenClaw gateway URL
+    OPENCLAW_EMBEDDING_ENDPOINT  - Embedding API endpoint URL
+    OPENCLAW_MODEL_ENDPOINT      - Model API endpoint URL
 """
 
 import asyncio
@@ -45,13 +51,14 @@ def main():
             })
         
         # Load configuration
-        config = load_config("config/config.json")
-        
+        config_path = os.getenv("CONFIG_PATH", "config/config.json")
+        config = load_config(config_path)
+
         if enable_tracing:
             tracer.add_event("config_loaded", {"bot_name": config.name})
-        
-        # Start bot with tracing
-        asyncio.run(start_bot(config))
+
+        # Start bot with tracing (pass path for live reload watcher)
+        asyncio.run(start_bot(config, config_path=config_path))
         
     except FileNotFoundError as e:
         if enable_tracing:

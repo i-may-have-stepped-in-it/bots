@@ -15,7 +15,7 @@ from typing import Dict, Any
 import discord
 from discord.ext import tasks
 
-from core.config import JenniferConfig
+from core.config import JenniferConfig, watch_config
 from core.logging_config import setup_logging
 from core.persistent_queue import PersistentQueue, Task, TaskManager
 from core.tracing import get_tracer, SpanStatus
@@ -36,34 +36,36 @@ tracer = get_tracer()
 class JenniferBot(discord.AutoShardedClient):
     """Jennifer Discord Bot - Refactored version."""
     
-    def __init__(self, config: JenniferConfig, **kwargs):
+    def __init__(self, config: JenniferConfig, config_path: str = "config/config.json", **kwargs):
         # Enable all intents
         intents = discord.Intents.all()
-        
+
         super().__init__(
             intents=intents,
             **kwargs
         )
-        
+
         self.config = config
+        self._config_path = config_path
         self.user_message_histories: Dict[str, Any] = {}
         self.history_file_name = config.get_history_file_name()
-        
+
         # Task queues
         self.task_manager = TaskManager(data_dir="/app/data")
         self.image_queue: PersistentQueue = self.task_manager.get_queue("image")
         self.video_queue: PersistentQueue = self.task_manager.get_queue("video")
         self.message_queue: PersistentQueue = self.task_manager.get_queue("message")
-        
+
         # Set global references for command handlers
         global global_image_queue, global_video_queue, global_message_queue
         import bot.commands.handlers as handlers
         handlers.image_queue = self.image_queue
         handlers.video_queue = self.video_queue
         handlers.message_queue = self.message_queue
-        
+
         # Background tasks
         self._cleanup_task = None
+        self._config_watcher_task = None
         self._queue_workers = []
     
     async def setup_hook(self):
@@ -86,11 +88,41 @@ class JenniferBot(discord.AutoShardedClient):
         self._queue_workers.append(self.loop.create_task(self._image_worker()))
         self._queue_workers.append(self.loop.create_task(self._video_worker()))
         self._queue_workers.append(self.loop.create_task(self._message_worker()))
-        
+
+        # Start live config watcher
+        self._config_watcher_task = self.loop.create_task(
+            watch_config(self._config_path, self._on_config_reload)
+        )
+
         # Start periodic cleanup
         self._cleanup_old_data.start()
-        
+
         logger.info("Bot setup complete")
+
+    def _on_config_reload(self, new_config: JenniferConfig) -> None:
+        """Called by watch_config() whenever config.json changes.
+
+        Hot-reloadable fields: everything except discord_token (requires
+        reconnect) and queue worker settings (require restart).
+        """
+        old_log_level = self.config.log_level
+        self.config = new_config
+
+        # Re-apply log level if it changed
+        if new_config.log_level != old_log_level:
+            setup_logging(
+                log_level=new_config.log_level,
+                log_dir="/app/logs",
+                use_json=True,
+                app_name=new_config.name,
+            )
+            logger.info(f"Log level changed to {new_config.log_level}")
+
+        logger.info(
+            f"Config reloaded live — name={new_config.name}, "
+            f"log_level={new_config.log_level}, "
+            f"only_when_called={new_config.only_when_called}"
+        )
     
     def _load_message_histories(self):
         """Load user message histories from file."""
@@ -493,7 +525,7 @@ class JenniferBot(discord.AutoShardedClient):
         
         # Check for active conversation
         user_id = message.author.id
-        current_time = asyncio.get_event_loop().time()
+        current_time = time.time()
         
         if user_id in active_users:
             last_time = active_users[user_id]
@@ -536,7 +568,7 @@ class JenniferBot(discord.AutoShardedClient):
                 "content": message.content,
             },
             user_id=message.author.id,
-            created_at=asyncio.get_event_loop().time(),
+            created_at=time.time(),
         )
         
         await self.message_queue.put(task)
@@ -583,7 +615,10 @@ class JenniferBot(discord.AutoShardedClient):
         # Cancel background tasks
         if self._cleanup_task:
             self._cleanup_task.cancel()
-        
+
+        if self._config_watcher_task:
+            self._config_watcher_task.cancel()
+
         for worker in self._queue_workers:
             worker.cancel()
         
@@ -596,7 +631,7 @@ class JenniferBot(discord.AutoShardedClient):
         await super().close()
 
 
-async def start_bot(config: JenniferConfig):
+async def start_bot(config: JenniferConfig, config_path: str = "config/config.json"):
     """Main entry point to start the bot."""
     # Setup logging
     setup_logging(
@@ -605,12 +640,12 @@ async def start_bot(config: JenniferConfig):
         use_json=True,
         app_name=config.name,
     )
-    
+
     logger.info(f"Starting {config.name} bot...")
-    
+
     # Create and start bot
-    bot = JenniferBot(config)
-    
+    bot = JenniferBot(config, config_path=config_path)
+
     try:
         await bot.start(config.discord_token)
     except KeyboardInterrupt:
