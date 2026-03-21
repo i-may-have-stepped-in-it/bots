@@ -38,16 +38,19 @@ ytdl = youtube_dl.YoutubeDL(YTDL_FORMAT_OPTIONS)
 
 class MusicPlayer:
     """Manages music playback for a guild."""
-    
+
     def __init__(self, channel: discord.TextChannel, bot: discord.Client):
         self.bot = bot
         self.channel = channel
+        # _display_queue mirrors the asyncio.Queue for safe iteration without
+        # accessing the private ._queue attribute.
+        self._display_queue: list[str] = []
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.now_playing: Optional[str] = None
         self.loop = False
         self.volume = 0.5
         self.voice_client: Optional[discord.VoiceClient] = None
-    
+
     async def safe_disconnect(self):
         """Safely disconnect from voice channel."""
         try:
@@ -57,7 +60,7 @@ class MusicPlayer:
                 logger.info("Disconnected from voice channel")
         except Exception as e:
             logger.error(f"Error during disconnect: {e}")
-    
+
     async def join(self, channel: discord.VoiceChannel):
         """Join a voice channel."""
         try:
@@ -70,49 +73,52 @@ class MusicPlayer:
         except Exception as e:
             logger.error(f"Error joining voice channel: {e}")
             raise
-    
+
     async def disconnect(self):
         """Disconnect from voice channel."""
         await self.safe_disconnect()
-    
+
     def is_playing(self) -> bool:
         """Check if anything is playing."""
         return (
-            self.voice_client is not None 
+            self.voice_client is not None
             and self.voice_client.is_playing()
         )
-    
+
     async def enqueue(self, url: str):
         """Add a song to the queue."""
         await self.queue.put(url)
+        self._display_queue.append(url)
         logger.info(f"Enqueued: {url}")
-    
+
     async def play_next(self):
         """Play the next song in the queue."""
         if self.voice_client is None:
             logger.warning("Voice client not initialized, cannot play")
             return
-        
+
         if self.queue.empty():
             self.now_playing = None
             await self.channel.send("Queue is empty. Leaving voice channel.")
             await self.safe_disconnect()
             return
-        
+
         url = await self.queue.get()
-        
+        if url in self._display_queue:
+            self._display_queue.remove(url)
+
         try:
             # Extract info in executor to avoid blocking
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             data = await loop.run_in_executor(
-                None, 
+                None,
                 lambda: ytdl.extract_info(url, download=False)
             )
         except Exception as e:
             logger.error(f"Error extracting video info: {e}")
             await self.channel.send(f"Error processing song: {e}")
             return
-        
+
         # Handle playlists
         if "entries" in data:
             if data["entries"]:
@@ -120,60 +126,60 @@ class MusicPlayer:
             else:
                 await self.channel.send("Playlist is empty.")
                 return
-        
+
         filename = data["url"]
         self.now_playing = data.get("title", "Unknown")
-        
+
         # Create audio source with volume control
         source = discord.PCMVolumeTransformer(
             discord.FFmpegPCMAudio(filename, **FFMPEG_OPTIONS),
             volume=self.volume,
         )
-        
+
+        # Capture the running loop now (in async context) for use in the
+        # sync `after` callback which runs in a different thread.
+        event_loop = asyncio.get_running_loop()
+
         def after_playing(error):
             if error:
                 logger.error(f"Playback error: {error}")
-            # Schedule next song
-            asyncio.run_coroutine_threadsafe(
-                self.play_next(), 
-                self.bot.loop
-            )
-        
+            asyncio.run_coroutine_threadsafe(self.play_next(), event_loop)
+
         self.voice_client.play(source, after=after_playing)
-        
-        # Use run_coroutine_threadsafe since we're in a callback context
+
         asyncio.run_coroutine_threadsafe(
             self.channel.send(f"🎵 Now playing: **{self.now_playing}**"),
-            self.bot.loop
+            event_loop,
         )
-        
+
         logger.info(f"Started playing: {self.now_playing}")
-    
+
     async def set_volume(self, volume: float):
         """Set playback volume (0.0 to 1.0)."""
         self.volume = max(0.0, min(1.0, volume))
-        
+
         if self.voice_client and self.voice_client.source:
             self.voice_client.source.volume = self.volume
-        
+
         logger.info(f"Volume set to {self.volume:.2f}")
-    
+
     async def stop(self):
         """Stop playback and clear queue."""
         if self.voice_client and self.voice_client.is_playing():
             self.voice_client.stop()
             self.now_playing = None
-            
+
             # Clear queue
             while not self.queue.empty():
                 try:
                     self.queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
-            
+            self._display_queue.clear()
+
             await self.channel.send("⏹️ Playback stopped and queue cleared.")
             logger.info("Playback stopped")
-    
+
     async def skip(self):
         """Skip current song."""
         if self.voice_client and self.voice_client.is_playing():
@@ -182,22 +188,22 @@ class MusicPlayer:
             logger.info("Song skipped")
         else:
             await self.channel.send("Nothing is playing to skip.")
-    
+
     async def pause(self):
         """Pause playback."""
         if self.voice_client and self.voice_client.is_playing():
             self.voice_client.pause()
             await self.channel.send("⏸️ Paused.")
-    
+
     async def resume(self):
         """Resume playback."""
         if self.voice_client and self.voice_client.is_paused():
             self.voice_client.resume()
             await self.channel.send("▶️ Resumed.")
-    
+
     def get_queue_list(self) -> list[str]:
         """Get list of queued URLs (for display)."""
-        return list(self.queue._queue)
+        return list(self._display_queue)
 
 
 # Guild music player registry
@@ -221,10 +227,14 @@ async def cleanup_empty_voice_channels(bot: discord.Client):
     """Background task to disconnect from empty voice channels."""
     while True:
         await asyncio.sleep(30)  # Check every 30 seconds
-        
+
+        # Guard: bot may not be ready yet
+        if bot.user is None:
+            continue
+
         for guild_id, player in list(music_players.items()):
             if (
-                player.voice_client 
+                player.voice_client
                 and player.voice_client.is_connected()
                 and len(player.voice_client.channel.members) == 1
                 and bot.user in player.voice_client.channel.members
