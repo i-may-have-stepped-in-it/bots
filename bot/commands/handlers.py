@@ -6,6 +6,7 @@ Organized by category: image, admin, session, voice, music.
 import asyncio
 import logging
 import re
+import time
 from typing import Optional
 
 import discord
@@ -46,8 +47,10 @@ async def _parse_video_prompt(command: str) -> tuple[str, Optional[str]]:
     if " --image " in prompt:
         parts = prompt.split(" --image ", 1)
         prompt = parts[0].strip()
-        image_path = parts[1].strip().split()[0] if parts[1] else None
-    
+        after_flag = parts[1].strip()
+        tokens = after_flag.split()
+        image_path = tokens[0] if tokens else None
+
     return prompt, image_path
 
 
@@ -158,7 +161,7 @@ async def handle_command(
     
     # Update active user tracking
     if user_id in active_users:
-        active_users[user_id] = asyncio.get_event_loop().time()
+        active_users[user_id] = time.time()
     
     # Guild channel admin command restriction
     if (
@@ -255,7 +258,7 @@ async def handle_draw_command(
             "user_name": message.author.display_name,
         },
         user_id=message.author.id,
-        created_at=asyncio.get_event_loop().time(),
+        created_at=time.time(),
     )
     
     await image_queue.put(task)
@@ -326,7 +329,7 @@ async def handle_txt2vid_command(
             "user_name": message.author.display_name,
         },
         user_id=message.author.id,
-        created_at=asyncio.get_event_loop().time(),
+        created_at=time.time(),
     )
     
     await video_queue.put(task)
@@ -377,13 +380,28 @@ async def handle_load_model_command(
         return
     
     load_msg = await message.channel.send(f"⏳ Loading model: `{model_name}`...")
-    
+
     try:
-        # TODO: Implement actual model loading
-        await asyncio.sleep(2)  # Placeholder
-        await load_msg.edit(content=f"✅ Model loaded: `{model_name}`")
+        from utils.image_gen import check_current_model
+
+        # Temporarily point config at the requested model so check_current_model
+        # will detect a mismatch and issue the backend switch request.
+        original_model = config.sd.model
+        config.sd.model = model_name
+        try:
+            result = await check_current_model(config, message, load_msg)
+        finally:
+            # Always restore in case the switch fails partway through.
+            config.sd.model = original_model if result is None else model_name
+
+        if result:
+            config.sd.model = model_name
+            await load_msg.edit(content=f"✅ Model loaded: `{model_name}`")
+        else:
+            config.sd.model = original_model
+            await load_msg.edit(content=f"❌ Failed to load model: `{model_name}` (backend returned no result)")
     except Exception as e:
-        logger.error(f"Error loading model: {e}")
+        logger.exception(f"Error loading model: {e}")
         await load_msg.edit(content=f"❌ Failed to load model: {str(e)[:200]}")
 
 
@@ -1000,7 +1018,7 @@ async def handle_messages(
                 return
         
         # Check active user timeout
-        current_time = asyncio.get_event_loop().time()
+        current_time = time.time()
         if message.author.id in active_users:
             last_interaction = active_users[message.author.id]
             if (current_time - last_interaction) <= interaction_timeout:
@@ -1083,7 +1101,7 @@ async def _queue_message_task(
             "history_file_name": history_file_name,
         },
         user_id=message.author.id,
-        created_at=asyncio.get_event_loop().time(),
+        created_at=time.time(),
     )
     
     await message_queue.put(task)

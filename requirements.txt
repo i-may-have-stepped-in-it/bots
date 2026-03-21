@@ -1,34 +1,68 @@
-llvmlite
-numba
-openai
-Pillow
-requests
-torch
-numpy
-libnacl
-pynacl
-watchdog
-silero
-omegaconf
-torchaudio
-aiohttp
-speechrecognition
-ffmpeg
-openai-whisper
-soundfile
-nltk
-pocketsphinx
-pexpect
-aiofiles
-diffusers
-transformers
-accelerate
-discord.py>=2.3
-opencv-python
-imageio
-imageio-ffmpeg
-docker
-yt-dlp
-pydantic>=2.0
-pydantic-settings>=2.0
-aiosqlite>=0.19.0
+# Core dependencies with pinned versions for stability
+# discord.py 2.3+ compatible with voice_recv extension
+discord.py>=2.3.0,<2.5.0
+
+# Configuration and data validation
+pydantic>=2.0.0,<3.0.0
+pydantic-settings>=2.0.0,<3.0.0
+
+# Async SQLite support
+aiosqlite>=0.19.0,<1.0.0
+aiofiles>=23.0.0,<25.0.0
+
+# HTTP client
+aiohttp>=3.8.0,<4.0.0
+requests>=2.28.0,<3.0.0
+
+# OpenAI API client
+openai>=1.0.0,<2.0.0
+
+# ML / AI libraries (pinned for stability)
+torch>=2.0.0,<3.0.0
+torchaudio>=2.0.0,<3.0.0
+transformers>=4.30.0,<5.0.0
+diffusers>=0.20.0,<1.0.0
+accelerate>=0.20.0,<1.0.0
+
+# Image processing
+Pillow>=10.0.0,<11.0.0
+opencv-python>=4.8.0,<5.0.0
+imageio>=2.30.0,<3.0.0
+imageio-ffmpeg>=0.4.8,<0.5.0
+
+# Audio processing
+soundfile>=0.12.0,<1.0.0
+speechrecognition>=3.10.0,<4.0.0
+openai-whisper>=20231117
+silero>=0.4.0,<1.0.0
+pocketsphinx>=0.1.15,<1.0.0
+
+# TTS / voice
+nltk>=3.8.0,<4.0.0
+
+# Video generation / processing
+ffmpeg-python>=0.2.0,<1.0.0
+
+# YouTube/music playback
+yt-dlp>=2023.7.6
+
+# Crypto/encoding for voice
+libnacl>=1.8.0,<2.0.0
+pynacl>=1.5.0,<2.0.0
+
+# Numerical computing
+numpy>=1.24.0,<2.0.0
+numba>=0.57.0,<1.0.0
+llvmlite>=0.40.0,<1.0.0
+
+# Configuration management
+omegaconf>=2.3.0,<3.0.0
+
+# File watching
+watchdog>=3.0.0,<4.0.0
+
+# Docker client
+docker>=6.0.0,<8.0.0
+
+# Process interaction
+pexpect>=4.8.0,<5.0.0

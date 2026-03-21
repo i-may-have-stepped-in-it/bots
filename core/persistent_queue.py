@@ -55,9 +55,11 @@ class PersistentQueue:
     Uses in-memory queue for speed, backs up to SQLite for durability.
     """
     
-    def __init__(self, db_path: str = "/app/data/queue.db", max_retries: int = 3):
+    def __init__(self, db_path: str = "/app/data/queue.db", max_retries: int = 3,
+                 max_backoff_seconds: int = 60):
         self.db_path = Path(db_path)
         self.max_retries = max_retries
+        self.max_backoff_seconds = max_backoff_seconds
         self._memory_queue: asyncio.Queue[Task] = asyncio.Queue()
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -182,18 +184,35 @@ class PersistentQueue:
                 )
                 await db.commit()
             
-            # Re-queue with delay
-            await asyncio.sleep(2 ** task.retries)  # Exponential backoff
+            # Re-queue with capped exponential backoff
+            delay = min(2 ** task.retries, self.max_backoff_seconds)
+            await asyncio.sleep(delay)
             await self._memory_queue.put(task)
         
         self._memory_queue.task_done()
     
     def qsize(self) -> int:
-        """Get approximate queue size."""
+        """Return in-memory queue depth.
+
+        NOTE: This only reflects tasks currently loaded in memory.  After a
+        restart, recovered tasks are re-added to the memory queue during
+        ``initialize()``, so ``qsize()`` will be accurate again once
+        initialization completes.  For a definitive count of all pending work
+        (including tasks not yet loaded), use ``pending_count()`` instead.
+        """
         return self._memory_queue.qsize()
-    
+
+    async def pending_count(self) -> int:
+        """Return the true number of pending tasks from the database."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status IN ('pending', 'processing')"
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else 0
+
     def empty(self) -> bool:
-        """Check if queue is empty."""
+        """Check if the in-memory queue is empty (see qsize() caveat)."""
         return self._memory_queue.empty()
     
     async def get_stats(self) -> dict:

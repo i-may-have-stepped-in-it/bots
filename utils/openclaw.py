@@ -14,6 +14,7 @@ from nacl.signing import SigningKey
 
 from utils.ssl_config import SSLConfigManager
 from core.tracing import get_tracer, SpanStatus
+from core.service_health import ServiceRegistry
 
 tracer = get_tracer()
 
@@ -260,11 +261,13 @@ class OpenClawClient:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             data = json.loads(msg.data)
                             if data.get("type") == "res" and data.get("id") == method_id:
+                                ServiceRegistry.get("openclaw").mark_success()
                                 return data
                         elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                             raise Exception(f"WS connection closed or error during {method}")
             except Exception as e:
                 logging.error(f"RPC {method} failed: {e}")
+                ServiceRegistry.get("openclaw").mark_failure(str(e))
                 return {"ok": False, "error": str(e)}
 
     async def ensure_agent_exists(self, user_id, user_name, config):
@@ -274,6 +277,15 @@ class OpenClawClient:
         # Skip RPC roundtrip only if the model hasn't changed since last verification
         if self._verified_agents.get(agent_id) == primary_model:
             return agent_id
+
+        # Skip if OpenClaw gateway is currently unavailable
+        oc_health = ServiceRegistry.get("openclaw")
+        if not oc_health.is_available:
+            wait = oc_health.wait_seconds()
+            logging.warning(
+                f"OpenClaw gateway unavailable, skipping agent setup (retry in {wait:.0f}s)"
+            )
+            return "chat"
 
         target_ip_url = config.get("OpenClawModelEndpoint") or None
 
@@ -791,11 +803,13 @@ async def generate_openclaw_response(config, user_id, discord_username, messages
         result = await client.send_message(user_id, discord_username, messages, config)
         tracer.add_event("response_received", {"response_length": len(result) if result else 0})
         tracer.end_span(span_id, SpanStatus.SUCCESS)
+        ServiceRegistry.get("openclaw").mark_success()
         return result
-        
+
     except Exception as e:
         tracer.add_event("error", {"error": str(e)})
         tracer.end_span(span_id, SpanStatus.ERROR, str(e))
+        ServiceRegistry.get("openclaw").mark_failure(str(e))
         raise
 
 async def delete_openclaw_agent(config, user_id, user_name):

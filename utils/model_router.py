@@ -60,7 +60,10 @@ def get_models_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[Mode
         }
     
     router_config = config.get("model_router")
-    if hasattr(router_config, 'intelligence_model'):
+    if router_config is None:
+        # Key missing or explicitly set to None — use defaults
+        pass
+    elif hasattr(router_config, 'intelligence_model'):
         # ModelRouterConfig Pydantic object — use attribute access
         return {
             ModelTier.INTELLIGENCE: router_config.intelligence_model or defaults.intelligence_model,
@@ -95,7 +98,9 @@ def get_fallback_chains_from_config(config: Optional[Dict[str, Any]] = None) -> 
         }
     
     router_config = config.get("model_router")
-    if hasattr(router_config, 'intelligence_fallbacks'):
+    if router_config is None:
+        pass
+    elif hasattr(router_config, 'intelligence_fallbacks'):
         # ModelRouterConfig Pydantic object — use attribute access
         return {
             ModelTier.INTELLIGENCE: list(router_config.intelligence_fallbacks or defaults.intelligence_fallbacks),
@@ -1067,16 +1072,17 @@ def detect_task_type(message: str) -> str:
 
 
 def detect_uncensored_content(message: str) -> bool:
-    """
-    Detect NSFW/explicit content keywords for uncensored routing.
+    """Detect NSFW/explicit content keywords for uncensored routing.
+
     Returns True if message contains explicit content indicators.
+    The matched pattern and original text are intentionally NOT logged
+    to avoid sensitive content appearing in log files.
     """
     msg_lower = message.lower()
-
     for pattern in UNCENSORED_KEYWORD_PATTERNS:
         if re.search(pattern, msg_lower):
+            logger.debug("Uncensored content detected (pattern withheld from log)")
             return True
-
     return False
 
 
