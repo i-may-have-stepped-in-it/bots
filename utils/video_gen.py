@@ -52,6 +52,20 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Module-level rate limiters keyed by backend config identity so that the
+# generate_video() convenience function (which creates a new VideoGenerator
+# per call) still enforces the shared limit.
+_rate_limiters: Dict[str, "TokenBucket"] = {}
+
+
+def _get_shared_limiter(config: "VideoConfig") -> "TokenBucket":
+    """Return a shared TokenBucket for the given config's rate limit."""
+    key = f"{config.backend}:{config.rate_limit_per_minute}"
+    if key not in _rate_limiters:
+        rpm = config.rate_limit_per_minute
+        _rate_limiters[key] = TokenBucket(capacity=rpm, refill_rate=rpm / 60.0)
+    return _rate_limiters[key]
+
 
 class VideoGenerationError(Exception):
     """Base exception for video generation errors."""
@@ -190,19 +204,17 @@ class ZAIVideoBackend(VideoBackend):
         path = Path(image_path)
         if not path.exists():
             raise VideoGenerationError(f"Image not found: {image_path}")
-        
+
         # Check file size (max 5MB)
         if path.stat().st_size > 5 * 1024 * 1024:
             raise VideoGenerationError("Image too large (max 5MB)")
-        
-        with open(path, "rb") as f:
-            image_data = f.read()
-        
+
+        # Offload blocking read to thread pool
+        image_data = await asyncio.to_thread(path.read_bytes)
+
         # Determine MIME type
-        mime_type = "image/jpeg"
-        if path.suffix.lower() == ".png":
-            mime_type = "image/png"
-        
+        mime_type = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+
         b64_data = base64.b64encode(image_data).decode("utf-8")
         return f"data:{mime_type};base64,{b64_data}"
     
@@ -259,12 +271,17 @@ class ZAIVideoBackend(VideoBackend):
                     )
                 
                 # Ensure output directory exists
-                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                
-                # Stream download to file
-                with open(output_path, "wb") as f:
-                    async for chunk in response.content.iter_chunked(8192):
-                        f.write(chunk)
+                await asyncio.to_thread(
+                    Path(output_path).parent.mkdir, parents=True, exist_ok=True  # type: ignore[arg-type]
+                )
+
+                # Stream download — collect chunks then write in one thread call
+                chunks = []
+                async for chunk in response.content.iter_chunked(8192):
+                    chunks.append(chunk)
+                await asyncio.to_thread(
+                    Path(output_path).write_bytes, b"".join(chunks)
+                )
         
         self.logger.info(f"Downloaded video to: {output_path}")
     
@@ -318,9 +335,9 @@ class FramePackBackend(VideoBackend):
             raise VideoGenerationError(
                 "gradio_client not installed. Run: pip install gradio_client"
             )
-        
+
         # Run gradio client in thread pool (it's blocking)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,  # Default executor
             self._generate_sync,
@@ -421,11 +438,8 @@ class VideoGenerator:
         else:
             raise VideoGenerationError(f"Unknown backend: {config.backend}")
         
-        # Rate limiter
-        self.rate_limiter = TokenBucket(
-            capacity=config.rate_limit_per_minute,
-            refill_rate=config.rate_limit_per_minute / 60.0  # per second
-        )
+        # Shared rate limiter — survives VideoGenerator re-creation
+        self.rate_limiter = _get_shared_limiter(config)
         
         self.logger.info(
             f"VideoGenerator initialized with backend: {config.backend}"
