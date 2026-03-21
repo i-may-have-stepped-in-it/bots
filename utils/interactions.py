@@ -221,18 +221,21 @@ def split_into_chunks(response: str, max_length: int = 1900) -> List[str]:
                 break_long_words=True,
                 replace_whitespace=False
             )
-            chunks.extend(wrapped or [line[:max_length]])
+            chunks.extend(wrapped)
         else:
             chunks.append(line)
-
-    # Merge small chunks to maximize message size, preserving blank lines
+    
+    # Merge small chunks to maximize message size
     merged_chunks = []
     current_chunk = ""
-
+    
     for chunk in chunks:
-        separator = "\n" if current_chunk else ""
-        if len(current_chunk) + len(separator) + len(chunk) <= max_length:
-            current_chunk = current_chunk + separator + chunk
+        if len(current_chunk) + len(chunk) + 1 <= max_length:
+            # Preserve blank lines (don't use .strip() which removes them)
+            if current_chunk:
+                current_chunk += "\n" + chunk
+            else:
+                current_chunk = chunk
         else:
             if current_chunk:
                 merged_chunks.append(current_chunk)
