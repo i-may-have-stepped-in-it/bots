@@ -8,7 +8,10 @@ FROM python:3.12-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libffi-dev \
-    libsodium-dev && \
+    libsodium-dev \
+    swig \
+    libpulse-dev \
+    libasound2-dev && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -17,13 +20,11 @@ WORKDIR /app
 
 # Install Python deps — cached layer, only rebuilds when requirements.txt changes
 COPY requirements.txt ./
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system -r requirements.txt
+RUN uv pip install --system -r requirements.txt
 
 # Install local voice extension — cached separately from main deps
 COPY ./utils/discord-ext-voice-recv ./utils/discord-ext-voice-recv
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system -U ./utils/discord-ext-voice-recv
+RUN uv pip install --system -U ./utils/discord-ext-voice-recv
 
 
 # =============================================================================
