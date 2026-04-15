@@ -2,22 +2,19 @@
 Unit tests for utils/model_router.py - Model routing and complexity scoring.
 """
 
-import pytest
-from unittest.mock import patch
 
 from utils.model_router import (
+    FALLBACK_CHAINS,
+    MODELS,
     ModelTier,
     RoutingDecision,
-    MODELS,
-    FALLBACK_CHAINS,
     _contains_phrase,
-    estimate_tokens,
     calculate_complexity_score,
     detect_task_type,
-    route_message,
     detect_uncensored_content,
+    estimate_tokens,
+    route_message,
 )
-
 
 # =============================================================================
 # ModelTier Tests
@@ -61,7 +58,7 @@ class TestRoutingDecision:
             reason="Test reason",
             tokens=100,
         )
-        
+
         assert decision.tier == ModelTier.HIGHSPEED
         assert decision.model == "test-model"
         assert decision.score == 0.5
@@ -81,7 +78,7 @@ class TestRoutingDecision:
             fallback_model="fallback-1",
             fallback_chain=["fallback-1", "fallback-2"],
         )
-        
+
         assert decision.fallback_model == "fallback-1"
         assert decision.fallback_chain == ["fallback-1", "fallback-2"]
 
@@ -144,7 +141,7 @@ class TestEstimateTokens:
         text_with_code = "```python\nprint('hello')\n```"
         base_tokens = len(text_with_code) // 4
         expected = int(base_tokens * 1.5)
-        
+
         assert estimate_tokens(text_with_code) == expected
 
     def test_inline_code_bonus(self):
@@ -152,21 +149,21 @@ class TestEstimateTokens:
         text_with_inline = "Use `print()` function"
         base_tokens = len(text_with_inline) // 4
         expected = int(base_tokens * 1.5)
-        
+
         assert estimate_tokens(text_with_inline) == expected
 
     def test_no_code(self):
         """Test regular text without code."""
         text = "This is a regular sentence without any code blocks."
         expected = len(text) // 4
-        
+
         assert estimate_tokens(text) == expected
 
     def test_very_long_text(self):
         """Test very long text."""
         text = "a" * 10000
         expected = 2500  # 10000 // 4
-        
+
         assert estimate_tokens(text) == expected
 
 
@@ -209,49 +206,49 @@ class TestCalculateComplexityScore:
         """Test error keywords increase score."""
         base_score = calculate_complexity_score("Hello world")
         error_score = calculate_complexity_score("There is an error in the code")
-        
+
         assert error_score > base_score
 
     def test_high_complexity_keywords(self):
         """Test high complexity keywords increase score significantly."""
         base_score = calculate_complexity_score("Hello world")
         arch_score = calculate_complexity_score("Design the system architecture")
-        
+
         assert arch_score > base_score + 0.3
 
     def test_reasoning_keywords(self):
         """Test reasoning keywords increase score."""
         base_score = calculate_complexity_score("Hello world")
         reason_score = calculate_complexity_score("Analyze the tradeoffs")
-        
+
         assert reason_score > base_score + 0.2
 
     def test_code_presence(self):
         """Test code presence increases score."""
         base_score = calculate_complexity_score("Hello world")
         code_score = calculate_complexity_score("Use function test()")
-        
+
         assert code_score > base_score + 0.25
 
     def test_multiple_questions(self):
         """Test multiple questions increase score."""
         base_score = calculate_complexity_score("Hello?")
         multi_score = calculate_complexity_score("What? How? When? Where?")
-        
+
         assert multi_score > base_score
 
     def test_vague_keywords(self):
         """Test vague keywords increase score."""
         base_score = calculate_complexity_score("Hello world")
         vague_score = calculate_complexity_score("Do something with stuff")
-        
+
         assert vague_score > base_score
 
     def test_data_patterns(self):
         """Test data patterns (numbers with units) increase score."""
         base_score = calculate_complexity_score("Hello world")
         data_score = calculate_complexity_score("Latency is 100ms, throughput 50%")
-        
+
         assert data_score > base_score
 
     def test_score_capped_at_one(self):
@@ -269,7 +266,7 @@ def complex_function():
         What are the pros and cons? How can we improve performance?
         Something about stuff...
         """ + "A" * 6000  # Long context bonus
-        
+
         score = calculate_complexity_score(text)
         assert score <= 1.0
 
@@ -391,34 +388,34 @@ class TestRouteMessage:
     def test_simple_query_routes_to_highspeed(self):
         """Test simple queries route to highspeed model."""
         decision = route_message("Hello")
-        
+
         assert decision.tier == ModelTier.HIGHSPEED
         assert decision.score < 0.4  # Low complexity
 
     def test_debugging_routes_to_intelligence(self):
         """Test debugging tasks route to intelligence model."""
         decision = route_message("I have an error in my code")
-        
+
         assert decision.tier == ModelTier.INTELLIGENCE
         assert decision.score > 0.3  # Moderate complexity
 
     def test_architecture_routes_to_intelligence(self):
         """Test architecture tasks route to intelligence model."""
         decision = route_message("Design a distributed system architecture")
-        
+
         assert decision.tier == ModelTier.INTELLIGENCE
         assert decision.score > 0.3  # Architecture forces intelligence regardless of score
 
     def test_uncensored_content_routes_to_uncensored(self):
         """Test uncensored content routes to uncensored model."""
         decision = route_message("Tell me about nsfw content")
-        
+
         assert decision.tier == ModelTier.UNCENSORED
 
     def test_token_estimation_included(self):
         """Test that token estimation is included in decision."""
         decision = route_message("Hello world")
-        
+
         assert decision.tokens > 0
         assert isinstance(decision.tokens, int)
 
@@ -426,7 +423,7 @@ class TestRouteMessage:
         """Test that fallback chain is included for high tiers."""
         decision_intelligence = route_message("Design a system architecture")
         decision_highspeed = route_message("Hello")
-        
+
         assert decision_intelligence.fallback_chain is not None
         assert decision_highspeed.fallback_chain is not None
         assert len(decision_intelligence.fallback_chain) > 0
@@ -434,7 +431,7 @@ class TestRouteMessage:
     def test_reason_provided(self):
         """Test that routing reason is provided."""
         decision = route_message("Hello")
-        
+
         assert decision.reason != ""
         assert isinstance(decision.reason, str)
 
@@ -449,7 +446,7 @@ class TestRouteMessage:
         """Test very long context routes to intelligence."""
         long_message = "A" * 6000  # Very long message
         decision = route_message(long_message)
-        
+
         assert decision.tier == ModelTier.INTELLIGENCE
         assert decision.score > 0.6  # Long context pushes score high
 
@@ -464,7 +461,7 @@ class TestRouterEdgeCases:
     def test_empty_message(self):
         """Test routing empty message."""
         decision = route_message("")
-        
+
         assert decision.tier == ModelTier.HIGHSPEED
         assert decision.score < 0.2
 
@@ -472,13 +469,13 @@ class TestRouterEdgeCases:
         """Test routing very long message."""
         message = "Word " * 10000
         decision = route_message(message)
-        
+
         assert decision.score >= 0.9  # Should be near max (capped at 1.0)
 
     def test_unicode_message(self):
         """Test routing unicode message."""
         decision = route_message("你好世界 🎉 日本語")
-        
+
         assert decision.tier == ModelTier.HIGHSPEED
         assert decision.tokens > 0
 
@@ -499,7 +496,7 @@ class MyClass:
 Analyze this code
         """
         decision = route_message(code_message)
-        
+
         assert decision.score > 0.5  # Code increases complexity
 
     def test_mixed_signals(self):
@@ -507,6 +504,6 @@ Analyze this code
         # Short but has complexity keywords
         message = "Debug this"  # Short but debugging keyword
         decision = route_message(message)
-        
+
         # Should still route appropriately based on overall score
         assert decision.tier in [ModelTier.HIGHSPEED, ModelTier.INTELLIGENCE]

@@ -17,7 +17,6 @@ import base64
 import hashlib
 import json
 import logging
-import os
 import time
 import uuid
 from pathlib import Path
@@ -257,7 +256,7 @@ async def ensure_device_registered(config_path: str) -> None:
     Reads and writes config_path in place.
     No-op if OpenClawDeviceToken and identity file are already configured.
     """
-    with open(config_path, "r", encoding="utf-8") as f:
+    with open(config_path, encoding="utf-8") as f:
         raw = json.load(f)
 
     gateway_url = raw.get("OpenClawGateway", "").strip()
@@ -286,7 +285,7 @@ async def ensure_device_registered(config_path: str) -> None:
             json.dump(identity, f, indent=2)
         logger.info(f"Device identity created: deviceId={identity['deviceId']}")
     else:
-        with open(identity_path, "r", encoding="utf-8") as f:
+        with open(identity_path, encoding="utf-8") as f:
             identity = json.load(f)
         logger.debug(f"Loaded existing device identity: deviceId={identity['deviceId']}")
 

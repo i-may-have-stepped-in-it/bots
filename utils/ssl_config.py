@@ -3,11 +3,10 @@ SSL/TLS configuration manager for local vs remote services.
 Automatically disables SSL verification for local/private networks.
 """
 
-import ssl
-import os
-from urllib.parse import urlparse
-from typing import Union
 import logging
+import os
+import ssl
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +50,10 @@ class SSLConfigManager:
         # Check for override environment variable
         override = os.getenv('VERIFY_SSL', '').lower()
         if override == 'always':
-            logger.debug(f"SSL verification forced ON by VERIFY_SSL=always")
+            logger.debug("SSL verification forced ON by VERIFY_SSL=always")
             return True
         if override == 'never':
-            logger.debug(f"SSL verification forced OFF by VERIFY_SSL=never")
+            logger.debug("SSL verification forced OFF by VERIFY_SSL=never")
             return False
 
         parsed = urlparse(url)
@@ -98,7 +97,7 @@ class SSLConfigManager:
         return False
 
     @classmethod
-    def get_ssl_context(cls, url: str) -> Union[ssl.SSLContext, bool]:
+    def get_ssl_context(cls, url: str) -> ssl.SSLContext | bool:
         """
         Get appropriate SSL context for URL.
 

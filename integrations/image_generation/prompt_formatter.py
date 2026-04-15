@@ -7,7 +7,8 @@ backend-specific formats while maintaining a consistent interface.
 """
 
 import logging
-from typing import Dict, Any, Optional, Union, List
+from typing import Any
+
 from integrations.image_generation.base_adapter import BaseImageAdapter
 
 
@@ -18,7 +19,7 @@ class PromptFormatter:
     This class provides a unified interface for preparing image generation
     requests across different backends (Automatic1111, ComfyUI, InvokeAI, etc.).
     """
-    
+
     def __init__(self, adapter: BaseImageAdapter):
         """
         Initialize the prompt formatter with an adapter.
@@ -28,13 +29,13 @@ class PromptFormatter:
         """
         self.adapter = adapter
         logging.info(f"Initialized PromptFormatter with adapter: {adapter.name}")
-    
+
     def format_prompt(
         self,
-        prompt: Union[str, List[str]],
+        prompt: str | list[str],
         upscale: bool = False,
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Format a prompt into a backend-specific payload.
         
@@ -65,26 +66,26 @@ class PromptFormatter:
             # Normalize prompt to string
             if isinstance(prompt, list):
                 prompt = " ".join(prompt)
-            
+
             # Use the adapter to prepare the backend-specific payload
             payload = self.adapter.prepare_payload(prompt, upscale=upscale, **kwargs)
-            
+
             logging.info(f"Prompt formatted successfully for {self.adapter.name}")
             logging.debug(f"Formatted payload: {payload}")
-            
+
             return payload
-            
+
         except Exception as e:
             error_msg = f"Failed to format prompt for {self.adapter.name}: {str(e)}"
             logging.error(error_msg)
             raise RuntimeError(error_msg) from e
-    
+
     def format_batch_prompts(
         self,
-        prompts: List[str],
+        prompts: list[str],
         upscale: bool = False,
         **kwargs
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Format multiple prompts into backend-specific payloads.
         
@@ -100,8 +101,8 @@ class PromptFormatter:
             self.format_prompt(prompt, upscale=upscale, **kwargs)
             for prompt in prompts
         ]
-    
-    def get_adapter_info(self) -> Dict[str, Any]:
+
+    def get_adapter_info(self) -> dict[str, Any]:
         """
         Get information about the current adapter.
         
@@ -115,8 +116,8 @@ class PromptFormatter:
             "options_endpoint": self.adapter.get_options_endpoint(),
             "models_endpoint": self.adapter.get_models_endpoint(),
         }
-    
-    def extract_prompt_from_payload(self, payload: Dict[str, Any]) -> Optional[str]:
+
+    def extract_prompt_from_payload(self, payload: dict[str, Any]) -> str | None:
         """
         Extract the prompt text from a formatted payload.
         
@@ -130,7 +131,7 @@ class PromptFormatter:
         """
         # Try common prompt field names across different backends
         prompt_fields = ["prompt", "text", "positive_prompt", "input"]
-        
+
         for field in prompt_fields:
             if field in payload:
                 value = payload[field]
@@ -142,5 +143,5 @@ class PromptFormatter:
                     inputs = value.get("inputs", {})
                     if "text" in inputs:
                         return inputs["text"]
-        
+
         return None

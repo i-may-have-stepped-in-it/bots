@@ -1,13 +1,18 @@
-import os
 import asyncio
-import aiohttp
 import base64
 import io
 import logging
-from typing import Optional
+import os
+
+import aiohttp
 from PIL import Image
 
-from integrations.image_generation import create_adapter, PromptFormatter, ComfyUIAdapter, InvokeAIAdapter
+from integrations.image_generation import (
+    ComfyUIAdapter,
+    InvokeAIAdapter,
+    PromptFormatter,
+    create_adapter,
+)
 
 
 async def generate_image_with_sd(prompt: str) -> str:
@@ -57,25 +62,25 @@ async def generate_image_with_sd(prompt: str) -> str:
         "SDClipSkip": int(os.environ.get("SD_CLIP_SKIP", 0)),
         "SDBackend": os.environ.get("SD_BACKEND", "automatic1111"),
     }
-    
+
     sd_api_url = config["SDURL"]
     if not sd_api_url:
         return "Error: SD_API_URL environment variable not set"
-    
+
     try:
         # Create adapter and formatter
         backend = config.get("SDBackend", "automatic1111")
         adapter = create_adapter(backend, config)
         formatter = PromptFormatter(adapter)
-        
+
         # Prepare payload using the formatter
         json_payload = formatter.format_prompt(prompt, upscale=False)
-        
+
     except Exception as e:
         error_msg = f"Error preparing request: {str(e)}"
         logging.error(error_msg)
         return f"Error: {error_msg}"
-    
+
     try:
         # Handle different backend types
         if isinstance(adapter, ComfyUIAdapter):
@@ -84,17 +89,17 @@ async def generate_image_with_sd(prompt: str) -> str:
             image = await _generate_invokeai(adapter, json_payload)
         else:
             image = await _generate_automatic1111(adapter, json_payload)
-        
+
         if image is None:
             return "Error: Failed to generate image"
-        
+
         # Convert image to base64
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
         image_base64 = base64.b64encode(buffered.getvalue()).decode()
-        
+
         return image_base64
-        
+
     except Exception as e:
         error_msg = f"Error during image generation: {str(e)}"
         logging.error(error_msg)
@@ -104,12 +109,12 @@ async def generate_image_with_sd(prompt: str) -> str:
 async def _generate_automatic1111(adapter, json_payload):
     """Generate image using Automatic1111 API."""
     url = adapter.get_generation_endpoint()
-    
+
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=json_payload, timeout=aiohttp.ClientTimeout(total=300)) as response:
             if response.status != 200:
                 raise ValueError(f"API returned status code {response.status}")
-            
+
             response_data = await response.json()
             return adapter.process_response(response_data)
 
@@ -117,47 +122,47 @@ async def _generate_automatic1111(adapter, json_payload):
 async def _generate_comfyui(adapter, json_payload):
     """Generate image using ComfyUI async workflow system."""
     base_url = adapter.get_base_url()
-    
+
     async with aiohttp.ClientSession() as session:
         # Step 1: Queue the prompt
         prompt_url = adapter.get_generation_endpoint()
-        
+
         async with session.post(prompt_url, json=json_payload) as response:
             response.raise_for_status()
             queue_response = await response.json()
-        
+
         prompt_id = queue_response.get("prompt_id")
         if not prompt_id:
             raise ValueError("No prompt_id returned from ComfyUI")
-        
+
         logging.info(f"ComfyUI workflow queued with prompt_id: {prompt_id}")
-        
+
         # Step 2: Poll for completion
         history_url = adapter.get_history_endpoint(prompt_id)
         max_attempts = 300
-        
+
         for attempt in range(max_attempts):
             await asyncio.sleep(1)
-            
+
             async with session.get(history_url) as response:
                 if response.status == 200:
                     history = await response.json()
-                    
+
                     if prompt_id in history:
                         logging.info(f"ComfyUI workflow completed after {attempt + 1} seconds")
                         result = history[prompt_id]
                         break
         else:
             raise TimeoutError("ComfyUI workflow timed out")
-        
+
         # Step 3: Extract and fetch the image
         outputs = result.get("outputs", {})
         if not outputs:
             raise ValueError("No outputs in ComfyUI result")
-        
+
         image_filename = None
         image_subfolder = ""
-        
+
         for node_id, node_output in outputs.items():
             if "images" in node_output:
                 for image_info in node_output["images"]:
@@ -166,13 +171,13 @@ async def _generate_comfyui(adapter, json_payload):
                     break
                 if image_filename:
                     break
-        
+
         if not image_filename:
             raise ValueError("No image found in ComfyUI outputs")
-        
+
         # Step 4: Fetch the image
         image_url = adapter.get_image_endpoint(image_filename, image_subfolder)
-        
+
         async with session.get(image_url) as response:
             response.raise_for_status()
             image_data = await response.read()
@@ -182,12 +187,12 @@ async def _generate_comfyui(adapter, json_payload):
 async def _generate_invokeai(adapter, json_payload):
     """Generate image using InvokeAI API."""
     url = adapter.get_generation_endpoint()
-    
+
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=json_payload, timeout=aiohttp.ClientTimeout(total=300)) as response:
             if response.status != 200:
                 raise ValueError(f"API returned status code {response.status}")
-            
+
             response_data = await response.json()
             return adapter.process_response(response_data)
 

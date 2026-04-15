@@ -1,9 +1,10 @@
 import asyncio
-import aiohttp
 import json
-import uuid
-import sys
 import os
+import sys
+import uuid
+
+import aiohttp
 
 CONFIG_PATH = os.environ.get("JENNIFER_CONFIG", "/app/config/config.json")
 
@@ -39,7 +40,7 @@ async def call_rpc(ws_url, api_token, method, params):
                     }
                 }
                 await ws.send_json(connect_frame)
-                
+
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         data = json.loads(msg.data)
@@ -57,7 +58,7 @@ async def call_rpc(ws_url, api_token, method, params):
                     "params": params
                 }
                 await ws.send_json(method_frame)
-                
+
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         data = json.loads(msg.data)
@@ -74,7 +75,7 @@ async def main():
     if not api_token:
         print(f"Error: OpenClawToken not found in {CONFIG_PATH}")
         sys.exit(1)
-    
+
     print("Fetching Gateway config...")
     res = await call_rpc(ws_url, api_token, "config.get", {})
     if res and res.get("ok"):

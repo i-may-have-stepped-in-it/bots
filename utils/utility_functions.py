@@ -1,10 +1,8 @@
 import logging
-import asyncio
+
 import discord
-import json
-import aiohttp
-import os
 from openai import AsyncOpenAI
+
 from utils.openclaw import generate_openclaw_response
 
 __all__ = [
@@ -15,7 +13,7 @@ __all__ = [
 discord.opus._load_default()
 
 
-async def generate_response(config, user_id, discord_username, user_message_histories, message=None, additional_instructions=None, prompt=None):
+async def generate_response(config, user_id, discord_username, user_message_histories=None, message=None, additional_instructions=None, prompt=None):
 	try:
 		client = None
 		response = await try_generate_response(client, config, user_id, discord_username, user_message_histories, message, additional_instructions, prompt, openai_valid=False, use_openclaw=True)
@@ -52,8 +50,19 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 			user_id_str = str(user_id)
 			messages = []
 
-			# Retrieve history for the user
-			history = user_message_histories.get(user_id_str, [])
+			# Retrieve history for the user (fallback to HistoryManager)
+			if user_message_histories is not None:
+				history = user_message_histories.get(user_id_str, [])
+			else:
+				from core.history import history_manager
+				history = await history_manager.get_history(user_id_str)
+
+			# Check cache if it's a direct prompt (not a complex conversation)
+			if prompt:
+				from core.cache import cache_manager
+				cached = await cache_manager.get({"prompt": prompt, "model": config.get("OpenaiModel")})
+				if cached:
+					return [cached]
 
 			if not (use_openclaw or prompt):
 				personality_command = f"You are {config['Personality']}."
@@ -105,19 +114,36 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 						logging.warning("OpenClaw did not return a string response.")
 					return None
 			else:
+				# Use the unified TextAIProvider
+				from integrations.text_generation.openai_provider import OpenAITextProvider
+				
 				if openai_valid:
-					response = await client.chat.completions.create(
-						messages=messages,
-						model=config["OpenaiModel"],
+					provider = OpenAITextProvider(
+						base_url=config.get("OpenAPIEndpoint"),
+						api_key=config.get("OpenAPIKey"),
+						default_model=config.get("OpenaiModel")
 					)
-				if not openai_valid:
-					response = await client.chat.completions.create(
-						model=config["SecondaryOpenaiModel"],
-						messages=messages,
+				else:
+					provider = OpenAITextProvider(
+						base_url=config.get("SecondaryOpenAPIEndpoint"),
+						api_key=config.get("SecondaryOpenAPIKey"),
+						default_model=config.get("SecondaryOpenaiModel")
 					)
+
+				try:
+					ai_response = await provider.chat(messages=messages)
+					response_text = ai_response.content
+				except Exception as circuit_error:
+					logging.error(f"Provider error or Circuit Breaker open: {circuit_error}")
+					return ["I'm currently experiencing high load or my backend is unavailable. Please try again later."]
+
 				logging.info("API response received.")
-				logging.debug(response)
-				response_text = response.choices[0].message.content
+				logging.debug(response_text)
+
+				# Cache successful response
+				if prompt:
+					from core.cache import cache_manager
+					await cache_manager.set({"prompt": prompt, "model": provider.default_model}, response_text)
 				if len(response_text) > 2000:
 					chunks = [response_text[i:i + 2000] for i in range(0, len(response_text), 2000)]
 					return chunks
@@ -125,5 +151,6 @@ async def try_generate_response(client, config, user_id, discord_username, user_
 					return [response_text]
 
 		except Exception as e:
+
 			logging.error("An error occurred during API call in try_generate_response: " + str(e), exc_info=True)
 			raise

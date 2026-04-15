@@ -4,15 +4,14 @@ Pytest configuration and shared fixtures for Jennifer bot tests.
 
 import asyncio
 import json
-import os
+import shutil
+import tempfile
+from collections.abc import Generator
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 import pytest_asyncio
-import tempfile
-import shutil
-from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
-from typing import Generator, AsyncGenerator
-
 
 # =============================================================================
 # Event Loop Fixture (for async tests)
@@ -297,7 +296,7 @@ def mock_admin_member():
 async def temp_queue(temp_data_dir: Path):
     """Create a temporary persistent queue for testing."""
     from core.persistent_queue import PersistentQueue
-    
+
     db_path = temp_data_dir / "test_queue.db"
     queue = PersistentQueue(str(db_path), max_retries=2)
     await queue.initialize()
@@ -314,7 +313,7 @@ async def temp_queue(temp_data_dir: Path):
 async def temp_task_manager(temp_data_dir: Path):
     """Create a temporary task manager for testing."""
     from core.persistent_queue import TaskManager
-    
+
     manager = TaskManager(str(temp_data_dir))
     yield manager
 

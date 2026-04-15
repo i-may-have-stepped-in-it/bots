@@ -16,11 +16,11 @@ Usage:
     score = calculate_complexity_score(user_message)
 """
 
-import re
 import logging
-from typing import Tuple, Optional, List, Dict, Any
+import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -41,24 +41,24 @@ class RoutingDecision:
     score: float
     reason: str
     tokens: int
-    fallback_model: Optional[str] = None
-    fallback_chain: Optional[List[str]] = None
+    fallback_model: str | None = None
+    fallback_chain: list[str] | None = None
 
 
-def get_models_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[ModelTier, str]:
+def get_models_from_config(config: dict[str, Any] | None = None) -> dict[ModelTier, str]:
     """Get model mappings from config or use defaults from ModelRouterConfig."""
     # Import here to avoid circular dependency
     from core.config import ModelRouterConfig
-    
+
     defaults = ModelRouterConfig()
-    
+
     if config is None:
         return {
             ModelTier.INTELLIGENCE: defaults.intelligence_model,
             ModelTier.HIGHSPEED: defaults.highspeed_model,
             ModelTier.UNCENSORED: defaults.uncensored_model,
         }
-    
+
     router_config = config.get("model_router")
     if router_config is None:
         # Key missing or explicitly set to None — use defaults
@@ -83,20 +83,20 @@ def get_models_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[Mode
     }
 
 
-def get_fallback_chains_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[ModelTier, List[str]]:
+def get_fallback_chains_from_config(config: dict[str, Any] | None = None) -> dict[ModelTier, list[str]]:
     """Get fallback chains from config or use defaults from ModelRouterConfig."""
     # Import here to avoid circular dependency
     from core.config import ModelRouterConfig
-    
+
     defaults = ModelRouterConfig()
-    
+
     if config is None:
         return {
             ModelTier.INTELLIGENCE: list(defaults.intelligence_fallbacks),
             ModelTier.HIGHSPEED: list(defaults.highspeed_fallbacks),
             ModelTier.UNCENSORED: list(defaults.uncensored_fallbacks),
         }
-    
+
     router_config = config.get("model_router")
     if router_config is None:
         pass
@@ -941,7 +941,7 @@ UNCENSORED_KEYWORD_PATTERNS = [
 ]
 
 
-def _contains_phrase(text: str, phrases: List[str]) -> bool:
+def _contains_phrase(text: str, phrases: list[str]) -> bool:
     """Case-insensitive phrase matching with word boundaries."""
     text_lower = text.lower()
     for phrase in phrases:
@@ -958,11 +958,11 @@ def estimate_tokens(text: str) -> int:
     """
     char_count = len(text)
     tokens = char_count // 4
-    
+
     # Code blocks are more token-dense
     if re.search(r'```|`[^`]+`', text):
         tokens = int(tokens * 1.5)  # +50% for code
-    
+
     return tokens
 
 
@@ -973,10 +973,10 @@ def calculate_complexity_score(message: str) -> float:
     """
     score = 0.0
     msg_lower = message.lower()
-    
+
     # Get token estimate
     tokens = estimate_tokens(message)
-    
+
     # Length-based scoring
     if tokens <= 50:
         score += 0.1
@@ -990,49 +990,49 @@ def calculate_complexity_score(message: str) -> float:
         score += 0.6
     else:
         score += 0.75  # Very long contexts
-    
+
     # Context length bonus (>5000 chars)
     if len(message) > 5000:
         score += 0.15
-    
+
     # Code presence scoring
     if re.search(r'(```|`[^`]+`|function|class|def |const |let |var |import |#include|=>|\{|\})', message):
         score += 0.3
-    
+
     # Error/debugging indicators (high complexity)
     if _contains_phrase(msg_lower, ERROR_KEYWORDS):
         score += 0.25
-    
+
     # Data patterns (metrics, numbers = analysis needed)
     data_patterns = len(re.findall(r'[0-9]+\.?[0-9]*\s*(%|ms|s|mb|gb|tb|million|billion)', message))
     if data_patterns > 2:
         score += 0.20
-    
+
     # High complexity keywords (architecture, design, research)
     if _contains_phrase(msg_lower, HIGH_COMPLEXITY_KEYWORDS):
         score += 0.35
-    
+
     # Reasoning keywords (analysis, evaluation, tradeoffs)
     if _contains_phrase(msg_lower, REASONING_KEYWORDS):
         score += 0.25
-    
+
     # Standard complexity keywords
     if _contains_phrase(msg_lower, STANDARD_COMPLEXITY_KEYWORDS):
         score += 0.3
-    
+
     # Medium complexity keywords
     if _contains_phrase(msg_lower, MEDIUM_COMPLEXITY_KEYWORDS):
         score += 0.1
-    
+
     # Question complexity (multiple questions)
     q_count = message.count('?')
     if q_count > 2:
         score += 0.10
-    
+
     # Vague terms (vague = needs stronger model)
     if _contains_phrase(msg_lower, VAGUE_KEYWORDS) or "…" in msg_lower:
         score += 0.15
-    
+
     # Cap at 1.0
     return min(score, 1.0)
 
@@ -1086,28 +1086,28 @@ def detect_uncensored_content(message: str) -> bool:
     return False
 
 
-def check_prefix_routing(message: str) -> Optional[str]:
+def check_prefix_routing(message: str) -> str | None:
     """
     Check for explicit routing prefixes (@kimi, @mini, @flash, @codex, @uncensored).
     Returns the model to use, or None if no prefix found.
     """
     trimmed = message.strip().lower()
-    
+
     if re.match(r'^@kimi\b|^@k\b', trimmed):
         return MODELS[ModelTier.INTELLIGENCE]
-    
+
     if re.match(r'^@minimax\b|^@mini\b|^@m\b', trimmed):
         return MODELS[ModelTier.HIGHSPEED]
-    
+
     if re.match(r'^@flash\b|^@f\b', trimmed):
         return MODELS[ModelTier.HIGHSPEED]
-    
+
     if re.match(r'^@codex\b|^@c\b', trimmed):
         return "openai-codex/gpt-5.3-codex"
-    
+
     if re.match(r'^@uncensored\b|^@uc\b|^@u\b|^@nsfw\b', trimmed):
         return MODELS[ModelTier.UNCENSORED]
-    
+
     return None
 
 
@@ -1118,22 +1118,22 @@ def get_tier_from_score(score: float, task_type: str) -> ModelTier:
     # High complexity tasks always go to intelligence
     if task_type in ("debugging", "architecture", "reasoning"):
         return ModelTier.INTELLIGENCE
-    
+
     if task_type in ("development", "data"):
         if score >= 0.5:
             return ModelTier.INTELLIGENCE
         else:
             return ModelTier.HIGHSPEED
-    
+
     if task_type in ("query", "administrative"):
         return ModelTier.HIGHSPEED
-    
+
     if task_type == "writing":
         if score >= 0.6:
             return ModelTier.INTELLIGENCE
         else:
             return ModelTier.HIGHSPEED
-    
+
     # Default score-based routing
     if score >= 0.5:
         return ModelTier.INTELLIGENCE
@@ -1141,23 +1141,23 @@ def get_tier_from_score(score: float, task_type: str) -> ModelTier:
         return ModelTier.HIGHSPEED
 
 
-def check_budget_override(current_spend: float, requested_tier: ModelTier) -> Optional[ModelTier]:
+def check_budget_override(current_spend: float, requested_tier: ModelTier) -> ModelTier | None:
     """
     Check if budget constraints force a tier downgrade.
     Returns the tier to use, or None if no override needed.
     """
     budget_percent = (current_spend / MONTHLY_BUDGET) * 100
-    
+
     # 95% budget - force free tier
     if budget_percent >= 95:
         logger.warning(f"Budget at {budget_percent:.1f}% - forcing highspeed tier")
         return ModelTier.HIGHSPEED
-    
+
     # 90% budget - downgrade to highspeed
     if budget_percent >= 90 and requested_tier == ModelTier.INTELLIGENCE:
         logger.warning(f"Budget at {budget_percent:.1f}% - downgrading to highspeed")
         return ModelTier.HIGHSPEED
-    
+
     return None
 
 
@@ -1165,9 +1165,9 @@ def route_message(
     message: str,
     default_model: str = "zai/glm-4.7-flash",
     current_spend: float = 0.0,
-    user_id: Optional[str] = None,
-    user_name: Optional[str] = None,
-    config: Optional[Dict[str, Any]] = None
+    user_id: str | None = None,
+    user_name: str | None = None,
+    config: dict[str, Any] | None = None
 ) -> RoutingDecision:
     """
     Main routing function - determines the best model for a message.
@@ -1186,7 +1186,7 @@ def route_message(
     # Get model mappings from config or use defaults
     models = get_models_from_config(config)
     fallback_chains = get_fallback_chains_from_config(config)
-    
+
     # 1. Check for prefix routing (explicit user intent)
     prefix_model = check_prefix_routing(message)
     if prefix_model:
@@ -1206,7 +1206,7 @@ def route_message(
             fallback_model=fallback_chain[0] if fallback_chain else None,
             fallback_chain=fallback_chain
         )
-    
+
     # 2. Check for uncensored/explicit content
     if detect_uncensored_content(message):
         uncensored_fallbacks = fallback_chains.get(ModelTier.UNCENSORED, [])
@@ -1219,14 +1219,14 @@ def route_message(
             fallback_model=uncensored_fallbacks[0] if uncensored_fallbacks else None,
             fallback_chain=list(uncensored_fallbacks)
         )
-    
+
     # 3. Calculate complexity
     score = calculate_complexity_score(message)
     task_type = detect_task_type(message)
-    
+
     # 3. Determine tier
     tier = get_tier_from_score(score, task_type)
-    
+
     # 4. Check budget constraints
     budget_override = check_budget_override(current_spend, tier)
     if budget_override:
@@ -1234,15 +1234,15 @@ def route_message(
         reason = f"budget_forced_{tier.value}"
     else:
         reason = f"score_{score:.1f}_task_{task_type}"
-    
+
     # 5. Select model
     model = models.get(tier, default_model)
     tokens = estimate_tokens(message)
-    
+
     # Log the decision
     user_info = f" for {user_name}" if user_name else ""
     logger.info(f"Routed{user_info}: {tier.value} -> {model} ({reason}, ~{tokens} tokens)")
-    
+
     return RoutingDecision(
         tier=tier,
         model=model,
@@ -1256,7 +1256,7 @@ def route_message(
 
 def get_model_for_discord_interaction(
     message_content: str,
-    conversation_history: Optional[list] = None,
+    conversation_history: list | None = None,
     **kwargs
 ) -> str:
     """
@@ -1288,17 +1288,17 @@ def get_prefix_help_text() -> str:
     """Get help text for prefix routing."""
     return """
 **Model Routing Prefixes:**
-• `@kimi` or `@k` - Use Intelligence tier (best for complex tasks)
-• `@mini` or `@m` - Use Highspeed tier (fast)
+• `@intel` - Use Intelligence tier
+• `@speed` - Use Highspeed tier
 • `@flash` or `@f` - Use Highspeed tier (fast, simple queries)
 • `@codex` or `@c` - Use Intelligence tier (coding)
-• `@uncensored` or `@u` - Use Uncensored tier (adult/NSFW content)
+• `@uncen` - Use Uncensored tier
 
 Without a prefix, I'll automatically choose based on your message complexity.
 """.strip()
 
 
-def get_model_with_fallback(decision: RoutingDecision) -> tuple[str, Optional[str]]:
+def get_model_with_fallback(decision: RoutingDecision) -> tuple[str, str | None]:
     """
     Get the primary model and optional fallback for a routing decision.
     
@@ -1311,7 +1311,7 @@ def get_model_with_fallback(decision: RoutingDecision) -> tuple[str, Optional[st
 # Stats tracking for cost visibility
 class RouterStats:
     """Track routing decisions for cost analysis."""
-    
+
     def __init__(self):
         self.requests = {
             ModelTier.INTELLIGENCE: 0,
@@ -1319,11 +1319,11 @@ class RouterStats:
             ModelTier.UNCENSORED: 0,
         }
         self.estimated_cost = 0.0
-    
+
     def record(self, decision: RoutingDecision):
         """Record a routing decision."""
         self.requests[decision.tier] += 1
-        
+
         # Estimate cost per request
         costs = {
             ModelTier.INTELLIGENCE: 0.008,
@@ -1331,13 +1331,13 @@ class RouterStats:
             ModelTier.UNCENSORED: 0.0005,  # Venice GLM 4.7 Flash → Local fallback
         }
         self.estimated_cost += costs.get(decision.tier, 0.002)
-    
+
     def get_summary(self) -> str:
         """Get a summary of routing stats."""
         total = sum(self.requests.values())
         if total == 0:
             return "No requests yet."
-        
+
         lines = [
             "**Model Router Stats**",
             f"• Intelligence (Kimi): {self.requests[ModelTier.INTELLIGENCE]} requests",

@@ -2,18 +2,19 @@
 Voice recognition and TTS client for Jennifer.
 """
 
-import logging
 import asyncio
+import concurrent.futures
+import io
+import logging
+import textwrap
+
+import discord
+import nltk
 import torch
 import torchaudio
-import nltk
-import discord
 from discord.ext import voice_recv
-import io
-import textwrap
-from silero import *
 from discord.ext.voice_recv.extras import *
-import concurrent.futures
+from silero import *
 
 # Download NLTK data quietly
 nltk.download('punkt', quiet=True)
@@ -30,7 +31,7 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
         self.config = bot_config
         self.loop = asyncio.get_event_loop()
         self.tts_queue = asyncio.Queue()
-        
+
         # Initialize Silero model
         self.language = 'en'
         self.model_id = 'v3_en'
@@ -76,7 +77,7 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
         """Process recognized speech and generate response."""
         # Import here to avoid circular dependency
         from utils.utility_functions import generate_response
-        
+
         try:
             response_chunks = await generate_response(
                 self.config,
@@ -86,7 +87,7 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
                 message=None,
                 prompt=text
             )
-            
+
             if not response_chunks:
                 logger.warning("No response generated for speech input")
                 return
@@ -95,7 +96,7 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
             for chunk in response_chunks:
                 await self.text_to_speech(chunk)
                 audio_bytes_list = await self.tts_queue.get()
-                
+
                 if audio_bytes_list:
                     member = message.author
                     if member.voice:
@@ -123,7 +124,7 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
             else:
                 logger.warning("No audio was played")
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error processing speech")
             await message.channel.send("Sorry, I'm having trouble processing your request.")
 
@@ -132,11 +133,11 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
         max_length = 1900
         lines = text.split('\n')
         chunks = []
-        
+
         for line in lines:
             wrapped = textwrap.wrap(line, width=max_length, break_long_words=False)
             chunks.extend(wrapped)
-        
+
         for chunk in chunks:
             await channel.send(chunk)
 
@@ -158,7 +159,7 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
             if audio_bytes_list:
                 self.tts_queue.put_nowait(audio_bytes_list)
                 logger.info("TTS conversion completed")
-        except Exception as e:
+        except Exception:
             logger.exception("TTS conversion failed")
             raise
 
@@ -169,7 +170,7 @@ class VoiceRecvClient(voice_recv.VoiceRecvClient):
 
         sample_rate = 48000
         speaker = self.config.get('SileroSpeaker', 'en_107')
-        
+
         if not speaker:
             raise ValueError("SileroSpeaker not configured")
 

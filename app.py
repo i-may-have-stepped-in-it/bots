@@ -29,10 +29,9 @@ import os
 import sys
 import tracemalloc
 
-from core.config import load_config
-from core.logging_config import setup_logging
-from core.tracing import get_tracer, tracer
 from bot.client import start_bot
+from core.config import load_config
+from core.tracing import tracer
 
 # Enable memory tracing for debugging
 tracemalloc.start()
@@ -41,7 +40,7 @@ tracemalloc.start()
 def main():
     """Main entry point with tracing."""
     enable_tracing = os.getenv("ENABLE_TRACING", "true").lower() == "true"
-    
+
     try:
         # Start root trace
         if enable_tracing:
@@ -49,7 +48,7 @@ def main():
                 "version": "2.0",
                 "python_version": sys.version,
             })
-        
+
         # Load configuration
         config_path = os.getenv("CONFIG_PATH", "config/config.json")
         config = load_config(config_path)
@@ -59,7 +58,7 @@ def main():
 
         # Start bot with tracing (pass path for live reload watcher)
         asyncio.run(start_bot(config, config_path=config_path))
-        
+
     except FileNotFoundError as e:
         if enable_tracing:
             tracer.add_event("config_load_failed", {"error": str(e)})

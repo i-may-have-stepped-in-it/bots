@@ -49,7 +49,6 @@ select = [
 ignore = [
     "E203",  # Whitespace before ':' (conflicts with black)
     "E501",  # Line too long (handled by formatter)
-    "W503",  # Line break before binary operator
 ]
 
 [tool.ruff.lint.mccabe]

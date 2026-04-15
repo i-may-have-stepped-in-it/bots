@@ -3,20 +3,19 @@ Unit tests for core/config.py - Configuration management with Pydantic.
 """
 
 import json
-import pytest
 from pathlib import Path
-from unittest.mock import patch
+
+import pytest
 
 from core.config import (
-    SDConfig,
-    OpenClawConfig,
-    VoiceConfig,
-    VideoConfig,
     JenniferConfig,
+    OpenClawConfig,
+    SDConfig,
+    VideoConfig,
+    VoiceConfig,
     load_config,
     reload_config,
 )
-
 
 # =============================================================================
 # SDConfig Tests
@@ -227,7 +226,7 @@ class TestJenniferConfig:
         """Test history filename generation."""
         config = JenniferConfig(name="TestBot")
         assert config.get_history_file_name() == "TestBot_message_histories.json"
-        
+
         config_default = JenniferConfig()
         assert config_default.get_history_file_name() == "Jennifer_message_histories.json"
 
@@ -268,9 +267,9 @@ class TestConfigLoading:
         config_path = temp_config_dir / "config.json"
         with open(config_path, "w") as f:
             json.dump(minimal_config_dict, f)
-        
+
         config = JenniferConfig.load(str(config_path))
-        
+
         assert config.name == "TestJennifer"
         assert config.personality == "A friendly test bot"
         assert config.discord_token == "test-token-12345"
@@ -281,10 +280,10 @@ class TestConfigLoading:
     def test_load_file_not_found(self, temp_config_dir: Path):
         """Test loading non-existent config file."""
         config_path = temp_config_dir / "nonexistent.json"
-        
+
         with pytest.raises(FileNotFoundError) as exc_info:
             JenniferConfig.load(str(config_path))
-        
+
         assert "not found" in str(exc_info.value)
 
     def test_load_invalid_json(self, temp_config_dir: Path):
@@ -292,7 +291,7 @@ class TestConfigLoading:
         config_path = temp_config_dir / "invalid.json"
         with open(config_path, "w") as f:
             f.write("{ invalid json }")
-        
+
         with pytest.raises(json.JSONDecodeError):
             JenniferConfig.load(str(config_path))
 
@@ -307,14 +306,14 @@ class TestLegacyMigration:
     def test_migrate_legacy_basic(self, legacy_config_dict: dict):
         """Test basic legacy config migration."""
         config = JenniferConfig._migrate_legacy(legacy_config_dict)
-        
+
         assert config.name == "LegacyJennifer"
         assert config.discord_token == "legacy-token"
 
     def test_migrate_legacy_fallback_models(self, legacy_config_dict: dict):
         """Test migration of numbered fallback models."""
         config = JenniferConfig._migrate_legacy(legacy_config_dict)
-        
+
         assert config.openclaw.fallback_models == [
             "fallback-model-1",
             "fallback-model-2",
@@ -324,7 +323,7 @@ class TestLegacyMigration:
     def test_migrate_legacy_endpoints(self, legacy_config_dict: dict):
         """Test migration of numbered endpoints."""
         config = JenniferConfig._migrate_legacy(legacy_config_dict)
-        
+
         assert config.openclaw.model_endpoints == [
             "http://endpoint1:8000",
             "http://endpoint2:8000",
@@ -337,7 +336,7 @@ class TestLegacyMigration:
         """Test migration when no numbered fields exist."""
         raw = {"Name": "SimpleBot", "DiscordToken": "token123"}
         config = JenniferConfig._migrate_legacy(raw)
-        
+
         assert config.name == "SimpleBot"
         assert config.openclaw.fallback_models == []
         assert config.openclaw.model_endpoints == []
@@ -351,7 +350,7 @@ class TestLegacyMigration:
             "OpenClawmodel5": "model-5",  # Skip model4
         }
         config = JenniferConfig._migrate_legacy(raw)
-        
+
         assert config.openclaw.fallback_models == ["model-1", "model-3", "model-5"]
 
 
@@ -365,19 +364,19 @@ class TestFullConfig:
     def test_full_config(self, full_config_dict: dict):
         """Test migration of full config dictionary."""
         config = JenniferConfig._migrate_legacy(full_config_dict)
-        
+
         # Basic settings
         assert config.name == "TestJennifer"
         assert config.log_level == "DEBUG"
         assert config.history_length == 10000
         assert config.only_when_called is False
         assert config.interaction_timeout == 120
-        
+
         # Lists
         assert len(config.allowed_channels) == 2
         assert len(config.power_users) == 2
         assert len(config.ignored_words) == 2
-        
+
         # SD Config
         assert config.sd.url == "http://test-sd:7860"
         assert config.sd.model == "test-sd-model"
@@ -388,14 +387,14 @@ class TestFullConfig:
         assert config.sd.sampler == "DPM++ 2M"
         assert config.sd.scheduler == "karras"
         assert config.sd.steps == 25
-        
+
         # OpenClaw Config
         assert config.openclaw.gateway == "http://test-gateway:8000"
         assert config.openclaw.model == "test-model-v1"
         assert config.openclaw.context_window == 8192
         assert config.openclaw.embedding_dim == 768
         assert config.openclaw.use_assistant_message is True
-        
+
         # Voice Config
         assert config.voice.silero_speaker == "en_test"
         assert config.voice.recognizer == "whisper"
@@ -413,17 +412,17 @@ class TestGlobalConfig:
         config_path = temp_config_dir / "config.json"
         with open(config_path, "w") as f:
             json.dump(minimal_config_dict, f)
-        
+
         # Reset the global cache
         import core.config as config_module
         config_module._config = None
-        
+
         # First load should cache
         config1 = load_config(str(config_path))
-        
+
         # Second load should return cached
         config2 = load_config(str(config_path))
-        
+
         assert config1 is config2
 
     def test_reload_config_forces_reload(self, temp_config_dir: Path, minimal_config_dict: dict):
@@ -431,21 +430,21 @@ class TestGlobalConfig:
         config_path = temp_config_dir / "config.json"
         with open(config_path, "w") as f:
             json.dump(minimal_config_dict, f)
-        
+
         # Reset the global cache
         import core.config as config_module
         config_module._config = None
-        
+
         config1 = load_config(str(config_path))
-        
+
         # Modify the file
         minimal_config_dict["Name"] = "ModifiedName"
         with open(config_path, "w") as f:
             json.dump(minimal_config_dict, f)
-        
+
         # Reload should get new values
         config2 = reload_config(str(config_path))
-        
+
         assert config2.name == "ModifiedName"
         assert config1 is config2  # Should replace cached instance
 
@@ -460,7 +459,7 @@ class TestConfigEdgeCases:
     def test_empty_config(self):
         """Test with completely empty config."""
         config = JenniferConfig._migrate_legacy({})
-        
+
         assert config.name == "Jennifer"  # Default
         assert config.discord_token == ""
         assert config.allowed_channels == []
@@ -473,7 +472,7 @@ class TestConfigEdgeCases:
             "DiscordToken": "token_with_special!@#$%",
         }
         config = JenniferConfig._migrate_legacy(raw)
-        
+
         assert "quotes" in config.name
         assert "apostrophes" in config.name
         assert config.personality == "Line1\nLine2\tTabbed"
@@ -483,7 +482,7 @@ class TestConfigEdgeCases:
         long_personality = "A" * 10000
         raw = {"Personality": long_personality}
         config = JenniferConfig._migrate_legacy(raw)
-        
+
         assert len(config.personality) == 10000
 
     def test_unicode_in_config(self):
@@ -493,6 +492,6 @@ class TestConfigEdgeCases:
             "Personality": "日本語 테스트 🎌",
         }
         config = JenniferConfig._migrate_legacy(raw)
-        
+
         assert config.name == "詹妮弗 🤖"
         assert config.personality == "日本語 테스트 🎌"

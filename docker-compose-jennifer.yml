@@ -117,7 +117,113 @@ services:
           memory: 2G
 
   # ===========================================================================
+  # Decoupled Worker Services
+  # ===========================================================================
+  jennifer-worker-message:
+    user: "1000:1000"
+    image: idacat411/app:latest
+    container_name: jennifer-worker-message
+    command: ["python", "worker.py", "--type", "message"]
+    network_mode: host
+    profiles:
+      - all
+      - all-cpu
+      - bot-only
+      - workers
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: '10m'
+    volumes:
+      - ./config/:/app/config/
+      - ./nltk_data:/home/appuser/nltk_data
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TQDM_DISABLE=1
+      - PYTHONUNBUFFERED=1
+      - ENABLE_TRACING=true
+    restart: unless-stopped
+    deploy:
+      mode: "replicated"
+      replicas: 1
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  jennifer-worker-image:
+    user: "1000:1000"
+    image: idacat411/app:latest
+    container_name: jennifer-worker-image
+    command: ["python", "worker.py", "--type", "image"]
+    network_mode: host
+    profiles:
+      - all
+      - all-cpu
+      - bot-only
+      - workers
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: '10m'
+    volumes:
+      - ./config/:/app/config/
+      - ./nltk_data:/home/appuser/nltk_data
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TQDM_DISABLE=1
+      - PYTHONUNBUFFERED=1
+      - ENABLE_TRACING=true
+    restart: unless-stopped
+    deploy:
+      mode: "replicated"
+      replicas: 1
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  jennifer-worker-video:
+    user: "1000:1000"
+    image: idacat411/app:latest
+    container_name: jennifer-worker-video
+    command: ["python", "worker.py", "--type", "video"]
+    network_mode: host
+    profiles:
+      - all
+      - all-cpu
+      - bot-only
+      - workers
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: '10m'
+    volumes:
+      - ./config/:/app/config/
+      - ./nltk_data:/home/appuser/nltk_data
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TQDM_DISABLE=1
+      - PYTHONUNBUFFERED=1
+      - ENABLE_TRACING=true
+    restart: unless-stopped
+    deploy:
+      mode: "replicated"
+      replicas: 1
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  # ===========================================================================
   # LLM/Text Generation Backends
+
   # ===========================================================================
   llm-nvidia:
     container_name: jennifer-llm-nvidia

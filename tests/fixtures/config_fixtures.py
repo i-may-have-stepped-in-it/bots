@@ -2,13 +2,13 @@
 Configuration fixtures for testing.
 """
 
-from typing import Dict, Any
+from typing import Any
 
 
 def create_minimal_config(
     name: str = "TestJennifer",
     token: str = "test-token-12345",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create a minimal valid configuration dictionary.
     
@@ -41,7 +41,7 @@ def create_minimal_config(
     }
 
 
-def create_full_config() -> Dict[str, Any]:
+def create_full_config() -> dict[str, Any]:
     """
     Create a full configuration dictionary with all options.
     
@@ -106,7 +106,7 @@ def create_full_config() -> Dict[str, Any]:
 def create_legacy_config(
     name: str = "LegacyJennifer",
     num_models: int = 3,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create a legacy config with numbered model fields for migration testing.
     
@@ -121,20 +121,20 @@ def create_legacy_config(
         "Name": name,
         "DiscordToken": "legacy-token",
     }
-    
+
     # Add numbered model fields
     for i in range(1, num_models + 1):
         config[f"OpenClawmodel{i}"] = f"fallback-model-{i}"
-        
+
     # Add some endpoint fields
     config["OpenClawModelEndpoint1"] = "http://endpoint1:8000"
     config["OpenClawModelEndpoint2"] = "http://endpoint2:8000"
     config["OpenClawEmbeddingEndpoint1"] = "http://embed1:8000"
-    
+
     return config
 
 
-def create_invalid_config() -> Dict[str, Any]:
+def create_invalid_config() -> dict[str, Any]:
     """
     Create an invalid configuration for error testing.
     
