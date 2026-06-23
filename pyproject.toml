@@ -26,6 +26,13 @@ classifiers = [
 Homepage = "https://github.com/example/jennifer"
 Repository = "https://github.com/example/jennifer"
 
+[tool.setuptools]
+py-modules = ["app", "worker"]
+
+[tool.setuptools.packages.find]
+include = ["bot*", "core*", "integrations*", "utils*"]
+exclude = ["tests*", "k8s*", "migrations*"]
+
 [tool.ruff]
 # Ruff configuration for linting and formatting
 target-version = "py310"
