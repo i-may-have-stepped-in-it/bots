@@ -26,6 +26,13 @@ classifiers = [
 Homepage = "https://github.com/example/jennifer"
 Repository = "https://github.com/example/jennifer"
 
+[tool.setuptools]
+py-modules = ["app", "worker"]
+
+[tool.setuptools.packages.find]
+include = ["bot*", "core*", "integrations*", "utils*"]
+exclude = ["tests*", "k8s*", "migrations*"]
+
 [tool.ruff]
 # Ruff configuration for linting and formatting
 target-version = "py310"
@@ -49,7 +56,6 @@ select = [
 ignore = [
     "E203",  # Whitespace before ':' (conflicts with black)
     "E501",  # Line too long (handled by formatter)
-    "W503",  # Line break before binary operator
 ]
 
 [tool.ruff.lint.mccabe]

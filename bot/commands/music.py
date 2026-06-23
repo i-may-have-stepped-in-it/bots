@@ -5,7 +5,6 @@ Handles voice channel music playback with queue management.
 
 import asyncio
 import logging
-from typing import Optional
 
 import discord
 import yt_dlp as youtube_dl
@@ -46,10 +45,10 @@ class MusicPlayer:
         # accessing the private ._queue attribute.
         self._display_queue: list[str] = []
         self.queue: asyncio.Queue[str] = asyncio.Queue()
-        self.now_playing: Optional[str] = None
+        self.now_playing: str | None = None
         self.loop = False
         self.volume = 0.5
-        self.voice_client: Optional[discord.VoiceClient] = None
+        self.voice_client: discord.VoiceClient | None = None
 
     async def safe_disconnect(self):
         """Safely disconnect from voice channel."""

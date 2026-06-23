@@ -2,15 +2,15 @@
 Mock objects for Discord.py classes to use in testing.
 """
 
-from unittest.mock import MagicMock, AsyncMock, PropertyMock
-from typing import Optional, List, Any
-import discord
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
 from discord import ChannelType
 
 
 class MockDiscordUser:
     """Mock Discord User object."""
-    
+
     def __init__(
         self,
         user_id: int = 987654321,
@@ -22,30 +22,30 @@ class MockDiscordUser:
         self.name = name
         self.display_name = display_name
         self.bot = bot
-        
+
     def __str__(self):
         return self.name
-    
+
     def __repr__(self):
         return f"<MockDiscordUser id={self.id} name={self.name}>"
 
 
 class MockDiscordChannel:
     """Mock Discord Channel object."""
-    
+
     def __init__(
         self,
         channel_id: int = 111111111,
         name: str = "general",
         channel_type: ChannelType = ChannelType.text,
-        guild: Optional[Any] = None,
+        guild: Any | None = None,
     ):
         self.id = channel_id
         self.name = name
         self.type = channel_type
         self.guild = guild
         self.send = AsyncMock()
-        
+
     async def typing(self):
         """Mock typing context manager."""
         class TypingContext:
@@ -54,7 +54,7 @@ class MockDiscordChannel:
             async def __aexit__(self, *args):
                 pass
         return TypingContext()
-    
+
     async def fetch_message(self, message_id: int):
         """Mock fetch_message."""
         return MockDiscordMessage(message_id=message_id)
@@ -62,8 +62,8 @@ class MockDiscordChannel:
 
 class MockDMChannel(MockDiscordChannel):
     """Mock DM Channel object."""
-    
-    def __init__(self, recipient: Optional[MockDiscordUser] = None):
+
+    def __init__(self, recipient: MockDiscordUser | None = None):
         super().__init__(
             channel_id=recipient.id if recipient else 987654321,
             name="Direct Message",
@@ -74,7 +74,7 @@ class MockDMChannel(MockDiscordChannel):
 
 class MockDiscordGuild:
     """Mock Discord Guild object."""
-    
+
     def __init__(
         self,
         guild_id: int = 555555555,
@@ -84,7 +84,7 @@ class MockDiscordGuild:
         self.name = name
         self.voice_client = None
         self.me = MockDiscordUser(user_id=111111111, name="Jennifer", bot=True)
-        
+
     def get_member(self, user_id: int):
         """Mock get_member."""
         return MockDiscordUser(user_id=user_id)
@@ -92,12 +92,12 @@ class MockDiscordGuild:
 
 class MockVoiceChannel:
     """Mock Voice Channel object."""
-    
+
     def __init__(
         self,
         channel_id: int = 777777777,
         name: str = "General Voice",
-        guild: Optional[MockDiscordGuild] = None,
+        guild: MockDiscordGuild | None = None,
     ):
         self.id = channel_id
         self.name = name
@@ -108,10 +108,10 @@ class MockVoiceChannel:
 
 class MockVoiceState:
     """Mock Voice State object."""
-    
+
     def __init__(
         self,
-        channel: Optional[MockVoiceChannel] = None,
+        channel: MockVoiceChannel | None = None,
         self_mute: bool = False,
         self_deaf: bool = False,
     ):
@@ -122,14 +122,14 @@ class MockVoiceState:
 
 class MockMember(MockDiscordUser):
     """Mock Discord Member object."""
-    
+
     def __init__(
         self,
         user_id: int = 987654321,
         name: str = "testuser",
         display_name: str = "TestUser",
-        guild: Optional[MockDiscordGuild] = None,
-        voice_channel: Optional[MockVoiceChannel] = None,
+        guild: MockDiscordGuild | None = None,
+        voice_channel: MockVoiceChannel | None = None,
         administrator: bool = False,
         manage_guild: bool = False,
         manage_messages: bool = False,
@@ -137,10 +137,10 @@ class MockMember(MockDiscordUser):
     ):
         super().__init__(user_id, name, display_name, bot=False)
         self.guild = guild or MockDiscordGuild()
-        
+
         # Voice state
         self.voice = MockVoiceState(channel=voice_channel) if voice_channel else MockVoiceState()
-        
+
         # Permissions
         self.guild_permissions = MagicMock()
         self.guild_permissions.administrator = administrator
@@ -151,16 +151,16 @@ class MockMember(MockDiscordUser):
 
 class MockDiscordMessage:
     """Mock Discord Message object."""
-    
+
     def __init__(
         self,
         message_id: int = 123456789,
         content: str = "Hello!",
-        author: Optional[MockDiscordUser] = None,
-        channel: Optional[MockDiscordChannel] = None,
-        guild: Optional[MockDiscordGuild] = None,
-        mentions: Optional[List[MockDiscordUser]] = None,
-        reference: Optional[Any] = None,
+        author: MockDiscordUser | None = None,
+        channel: MockDiscordChannel | None = None,
+        guild: MockDiscordGuild | None = None,
+        mentions: list[MockDiscordUser] | None = None,
+        reference: Any | None = None,
     ):
         self.id = message_id
         self.content = content
@@ -169,13 +169,13 @@ class MockDiscordMessage:
         self.guild = guild
         self.mentions = mentions or []
         self.reference = reference
-        
+
         # Mock methods
         self.add_reaction = AsyncMock()
         self.reply = AsyncMock()
         self.edit = AsyncMock()
         self.delete = AsyncMock()
-        
+
     @property
     def jump_url(self):
         """Mock jump_url property."""
@@ -211,7 +211,7 @@ def create_mock_message(
         display_name=f"User{user_id}",
         bot=is_bot,
     )
-    
+
     if is_dm:
         channel = MockDMChannel(recipient=author)
         guild = None
@@ -222,7 +222,7 @@ def create_mock_message(
             name="general",
             guild=guild,
         )
-    
+
     return MockDiscordMessage(
         content=content,
         author=author,
@@ -248,7 +248,7 @@ def create_mock_member(
         Configured MockMember
     """
     voice_channel = MockVoiceChannel() if in_voice else None
-    
+
     return MockMember(
         user_id=user_id,
         voice_channel=voice_channel,
@@ -258,25 +258,25 @@ def create_mock_member(
 
 class MockBot:
     """Mock Discord Bot/Client object."""
-    
+
     def __init__(self):
         self.user = MockDiscordUser(user_id=111111111, name="Jennifer", bot=True)
         self.guilds = [MockDiscordGuild()]
         self.latency = 0.050
         self.voice_clients = []
-        
+
     def get_channel(self, channel_id: int):
         """Mock get_channel."""
         return MockDiscordChannel(channel_id=channel_id)
-    
+
     def get_guild(self, guild_id: int):
         """Mock get_guild."""
         return MockDiscordGuild(guild_id=guild_id)
-    
+
     async def fetch_user(self, user_id: int):
         """Mock fetch_user."""
         return MockDiscordUser(user_id=user_id)
-    
+
     async def fetch_channel(self, channel_id: int):
         """Mock fetch_channel."""
         return MockDiscordChannel(channel_id=channel_id)

@@ -103,7 +103,7 @@ services:
     tty: true
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/healthy') else 1)"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -117,7 +117,113 @@ services:
           memory: 2G
 
   # ===========================================================================
+  # Decoupled Worker Services
+  # ===========================================================================
+  jennifer-worker-message:
+    user: "1000:1000"
+    image: idacat411/app:latest
+    container_name: jennifer-worker-message
+    command: ["python", "worker.py", "--type", "message"]
+    network_mode: host
+    profiles:
+      - all
+      - all-cpu
+      - bot-only
+      - workers
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: '10m'
+    volumes:
+      - ./config/:/app/config/
+      - ./nltk_data:/home/appuser/nltk_data
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TQDM_DISABLE=1
+      - PYTHONUNBUFFERED=1
+      - ENABLE_TRACING=true
+    restart: unless-stopped
+    deploy:
+      mode: "replicated"
+      replicas: 1
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  jennifer-worker-image:
+    user: "1000:1000"
+    image: idacat411/app:latest
+    container_name: jennifer-worker-image
+    command: ["python", "worker.py", "--type", "image"]
+    network_mode: host
+    profiles:
+      - all
+      - all-cpu
+      - bot-only
+      - workers
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: '10m'
+    volumes:
+      - ./config/:/app/config/
+      - ./nltk_data:/home/appuser/nltk_data
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TQDM_DISABLE=1
+      - PYTHONUNBUFFERED=1
+      - ENABLE_TRACING=true
+    restart: unless-stopped
+    deploy:
+      mode: "replicated"
+      replicas: 1
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  jennifer-worker-video:
+    user: "1000:1000"
+    image: idacat411/app:latest
+    container_name: jennifer-worker-video
+    command: ["python", "worker.py", "--type", "video"]
+    network_mode: host
+    profiles:
+      - all
+      - all-cpu
+      - bot-only
+      - workers
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: '10m'
+    volumes:
+      - ./config/:/app/config/
+      - ./nltk_data:/home/appuser/nltk_data
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TQDM_DISABLE=1
+      - PYTHONUNBUFFERED=1
+      - ENABLE_TRACING=true
+    restart: unless-stopped
+    deploy:
+      mode: "replicated"
+      replicas: 1
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  # ===========================================================================
   # LLM/Text Generation Backends
+
   # ===========================================================================
   llm-nvidia:
     container_name: jennifer-llm-nvidia
@@ -296,32 +402,56 @@ services:
           cpus: '8'
           memory: 16G
 
-  # ===========================================================================
-  # Stable Diffusion - ComfyUI
+   # ===========================================================================
+  # Stable Diffusion - ComfyUI (3D-Optimized for RTX 5080)
   # ===========================================================================
   sd-comfyui-nvidia:
     container_name: jennifer-sd-comfyui-nvidia
-    image: yanwk/comfyui-boot:cu128-slim
-    pull_policy: always
+    image: jennifer-comfyui-3d:cu130
+    # Custom image: yanwk cu130-megapak-pt211 + deps for 6 heavy 3D nodes
+    # (SPAR3D, Hunyuan3D-2.1, TRELLIS2, UniRig, geometrypack, ComfyUI-3D-Pack).
+    # Deployed image was committed from a verified build; rebuild clean with:
+    #   docker compose -f docker-compose-jennifer.yml build sd-comfyui-nvidia
+    build:
+      context: ./docker/comfyui-3d
+      dockerfile: Dockerfile
+    pull_policy: never
     restart: unless-stopped
     profiles: 
       - sd-comfyui-nvidia
       - all
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+      # Allow PyTorch to use more of your 64GB RAM for offloading if needed
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      # Enable CORS for the Sorceress clone dev server origin so the browser app can call the API.
+      # --use-pytorch-cross-attention: RTX 5080 (Blackwell SM 12.0) has no xformers/flash-attn kernel.
+      - CLI_ARGS=--enable-cors-header http://localhost:8100 --use-pytorch-cross-attention
     ports:
       - "8188:8188"
     volumes:
+      # Main ComfyUI data
       - ../data/comfyui:/root/ComfyUI
+      
+      # Existing model mounts (read-only is fine for these)
       - ../data/models/Stable-diffusion:/root/ComfyUI/models/checkpoints:ro
       - ../data/models/VAE:/root/ComfyUI/models/vae:ro
       - ../data/models/Lora:/root/ComfyUI/models/loras:ro
       - ../data/models/ControlNet:/root/ComfyUI/models/controlnet:ro
       - ../data/models/ESRGAN:/root/ComfyUI/models/upscale_models:ro
-      - ../data/embeddings:/root/ComfyUI/models/embeddings:ro
+      - ../data/models/embeddings:/root/ComfyUI/models/embeddings:ro
+      
+      # 3D models directory — NEEDS WRITE ACCESS for downloads
+      - ../data/models/3D:/root/ComfyUI/models/3D:rw
+      
+      # Output directory
       - ../output:/root/ComfyUI/output
+      
+      # Custom nodes (persisted)
       - ../data/comfyui/custom_nodes:/root/ComfyUI/custom_nodes
+    # CRITICAL: Shared memory for multi-process 3D mesh operations
+    shm_size: 8gb
     stop_signal: SIGTERM
     stop_grace_period: 30s
     healthcheck:
@@ -334,12 +464,13 @@ services:
       resources:
         limits:
           cpus: '8'
-          memory: 16G
+          # Use more of your 64GB system RAM
+          memory: 48G
         reservations:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [compute, utility]
+              capabilities: [compute, utility, graphics]
 
   sd-comfyui-cpu:
     container_name: jennifer-sd-comfyui-cpu

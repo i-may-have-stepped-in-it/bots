@@ -2,21 +2,19 @@
 Unit tests for utils/video_gen.py - Video generation backends.
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-import asyncio
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
-from pathlib import Path
 
 from core.config import VideoConfig
 from utils.video_gen import (
+    FramePackBackend,
+    RateLimitExceeded,
+    VideoGenerationError,
     VideoGenerator,
     ZAIVideoBackend,
-    FramePackBackend,
-    VideoGenerationError,
-    RateLimitExceeded,
     check_video_health,
 )
-
 
 # =============================================================================
 # VideoConfig Fixtures
@@ -71,7 +69,7 @@ class TestZAIVideoBackend:
     async def test_health_check_success(self, zai_config):
         """Test health check with successful response."""
         backend = ZAIVideoBackend(zai_config)
-        
+
         # Just verify it doesn't crash and returns a dict
         result = await backend.health_check()
         assert isinstance(result, dict)
@@ -82,7 +80,7 @@ class TestZAIVideoBackend:
         """Test health check without API key."""
         zai_config.zai_api_key = ""
         backend = ZAIVideoBackend(zai_config)
-        
+
         result = await backend.health_check()
         assert result["healthy"] is False
         assert "API key not configured" in result["error"]
@@ -111,7 +109,7 @@ class TestFramePackBackend:
     async def test_health_check_returns_dict(self, framepack_config):
         """Test health check returns proper dict structure."""
         backend = FramePackBackend(framepack_config)
-        
+
         # Test returns dict with expected keys
         result = await backend.health_check()
         assert isinstance(result, dict)
@@ -121,7 +119,7 @@ class TestFramePackBackend:
     async def test_health_check_with_error(self, framepack_config):
         """Test health check handles errors."""
         backend = FramePackBackend(framepack_config)
-        
+
         # Result should have healthy=False when there's an error
         result = await backend.health_check()
         if not result["healthy"]:
@@ -170,11 +168,11 @@ class TestVideoGenerator:
     async def test_rate_limit_enforced(self, zai_config):
         """Test rate limiting prevents excessive requests."""
         generator = VideoGenerator(zai_config)
-        
+
         # Consume all tokens
         for _ in range(3):
             generator.rate_limiter.consume(1)
-        
+
         # Next request should fail
         with pytest.raises(RateLimitExceeded):
             await generator.generate("test prompt")
@@ -184,11 +182,11 @@ class TestVideoGenerator:
         """Test long prompts are truncated."""
         generator = VideoGenerator(zai_config)
         long_prompt = "x" * 1000
-        
+
         with patch.object(generator.backend, "generate", new_callable=AsyncMock) as mock_gen:
             mock_gen.return_value = "/tmp/test.mp4"
             await generator.generate(long_prompt)
-            
+
             # Check prompt was truncated
             call_args = mock_gen.call_args
             assert len(call_args.kwargs["prompt"]) <= 500
@@ -204,7 +202,7 @@ class TestRateLimiting:
     def test_token_bucket_allows_requests(self):
         """Test token bucket allows requests when tokens available."""
         from utils.rate_limiter import TokenBucket
-        
+
         bucket = TokenBucket(capacity=3, refill_rate=1.0)
         assert bucket.consume(1) is True
         assert bucket.consume(1) is True
@@ -213,7 +211,7 @@ class TestRateLimiting:
     def test_token_bucket_blocks_excessive_requests(self):
         """Test token bucket blocks when tokens exhausted."""
         from utils.rate_limiter import TokenBucket
-        
+
         bucket = TokenBucket(capacity=2, refill_rate=1.0)
         assert bucket.consume(1) is True
         assert bucket.consume(1) is True
@@ -222,12 +220,13 @@ class TestRateLimiting:
     def test_token_bucket_refills(self):
         """Test token bucket refills over time."""
         import time
+
         from utils.rate_limiter import TokenBucket
-        
+
         bucket = TokenBucket(capacity=2, refill_rate=10.0)  # Fast refill
         assert bucket.consume(2) is True  # Exhaust tokens
         assert bucket.consume(1) is False  # No tokens
-        
+
         time.sleep(0.2)  # Wait for refill
         assert bucket.consume(1) is True  # Should have tokens now
 

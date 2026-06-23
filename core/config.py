@@ -6,20 +6,26 @@ Replaces the messy dict-based config with validated, typed settings.
 import asyncio
 import json
 import logging
-import os
+import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, List, Optional
-from pydantic import BaseModel, Field, validator
+
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from core.secrets import vault
 
 logger = logging.getLogger(__name__)
 
+# Load encrypted secrets into environment before Pydantic evaluates BaseSettings
+# vault.load_secrets_to_env() -- REMOVED for security
 
 class SDConfig(BaseModel):
     """Stable Diffusion configuration."""
     backend: str = "automatic1111"  # automatic1111, comfyui, invokeai
-    url: str = Field(default_factory=lambda: os.getenv("SD_URL", ""))
-    comfy_url: str = Field(default_factory=lambda: os.getenv("SD_COMFY_URL", ""))
-    invoke_url: str = Field(default_factory=lambda: os.getenv("SD_INVOKE_URL", ""))
+    url: str = ""
+    comfy_url: str = ""
+    invoke_url: str = ""
     model: str = "cyberrealistic_classic40"
     clip_skip: int = 0
     cfg_scale: float = 7.0
@@ -35,7 +41,7 @@ class SDConfig(BaseModel):
 
 class OpenClawConfig(BaseModel):
     """OpenClaw gateway configuration."""
-    gateway: str = Field(default_factory=lambda: os.getenv("OPENCLAW_GATEWAY", ""))
+    gateway: str = ""
     token: str = ""
     device_token: str = ""
     device_identity_path: str = ""
@@ -46,9 +52,9 @@ class OpenClawConfig(BaseModel):
     context_window: int = 10240
     embedding: str = "text-embedding-ada-002"
     embedding_dim: int = 1024
-    embedding_endpoint: str = Field(default_factory=lambda: os.getenv("OPENCLAW_EMBEDDING_ENDPOINT", ""))
+    embedding_endpoint: str = ""
     embedding_endpoint_type: str = "openai"
-    model_endpoint: str = Field(default_factory=lambda: os.getenv("OPENCLAW_MODEL_ENDPOINT", ""))
+    model_endpoint: str = ""
     model_endpoint_type: str = "openai"
     personality: str = ""
     system_prompt: str = ""
@@ -56,16 +62,16 @@ class OpenClawConfig(BaseModel):
     stream: bool = False
     timeout: int = 600
     primer: str = ""  # Initial greeting/message primer
-    
+
     # Fields accessed via dict-style config["OpenClawPersona"]
     persona: str = ""  # Alias for personality (legacy compatibility)
-    
+
     # Fallback chain (replaces numbered models)
-    fallback_models: List[str] = Field(default_factory=list)
-    
+    fallback_models: list[str] = Field(default_factory=list)
+
     # Legacy endpoint lists (for compatibility)
-    embedding_endpoints: List[str] = Field(default_factory=list)
-    model_endpoints: List[str] = Field(default_factory=list)
+    embedding_endpoints: list[str] = Field(default_factory=list)
+    model_endpoints: list[str] = Field(default_factory=list)
 
 
 class VoiceConfig(BaseModel):
@@ -85,23 +91,23 @@ class VideoConfig(BaseModel):
     """
     # Backend selection
     backend: str = "zai"  # "zai" or "framepack"
-    
+
     # Z.AI API settings
     zai_api_key: str = ""
     zai_api_endpoint: str = "https://api.z.ai/api/paas/v4"
     zai_model: str = "CogVideoX-3"  # CogVideoX-3, ViduQ1, Vidu2
     zai_resolution: str = "720p"  # 480p, 720p, 1080p (model dependent)
     zai_duration: int = 5  # seconds (model dependent)
-    
+
     # FramePack local settings
-    framepack_url: str = "http://localhost:7860"  # Gradio API endpoint
+    framepack_url: str = "http://localhost:7860"
     framepack_model: str = "FramePack (Original)"  # or "FramePack-F1"
     framepack_steps: int = 25
     framepack_width: int = 640
     framepack_height: int = 480
     framepack_video_length: float = 4.0  # seconds
     framepack_use_teacache: bool = True
-    
+
     # Rate limiting (shared across backends)
     rate_limit_per_minute: int = 3
     max_prompt_length: int = 500
@@ -115,33 +121,40 @@ class ModelRouterConfig(BaseModel):
     """
     # High-speed tier: Fast, cheap models for simple queries
     highspeed_model: str = "zai/glm-4.7-flash"
-    highspeed_fallbacks: List[str] = Field(default_factory=list)
-    
+    highspeed_fallbacks: list[str] = Field(default_factory=list)
+
     # Intelligence tier: Capable models for complex tasks
     intelligence_model: str = "moonshot/kimi-k2.5"
-    intelligence_fallbacks: List[str] = Field(default_factory=lambda: [
+    intelligence_fallbacks: list[str] = Field(default_factory=lambda: [
         "zai/glm-4.7-flash",
     ])
-    
+
     # Uncensored tier: Models for NSFW/sensitive content
     uncensored_model: str = "venice/venice-uncensored-role-play"
-    uncensored_fallbacks: List[str] = Field(default_factory=lambda: [
+    uncensored_fallbacks: list[str] = Field(default_factory=lambda: [
         "venice/olafangensan-glm-4.7-flash-heretic",
         "localai/Qwen3-14B-Nexa-Uncensored",
     ])
 
 
-class JenniferConfig(BaseModel):
+class JenniferConfig(BaseSettings):
     """Main Jennifer bot configuration."""
+    model_config = SettingsConfigDict(
+        env_prefix="JENNIFER_",
+        env_nested_delimiter="__",
+        extra="ignore",
+        env_ignore_empty=True,
+    )
+
     # Bot identity
     name: str = "Jennifer"
     personality: str = ""
     appearance: str = ""
-    
+
     # Logging
-    log_level: str = "INFO"  # Can be overridden via LOG_LEVEL env var
+    log_level: str = "INFO"
     log_level_debug: str = "DEBUG"
-    
+
     # Behavior
     typing_delay: int = 1
     history_length: int = 12000
@@ -149,23 +162,23 @@ class JenniferConfig(BaseModel):
     respond_to_mentions: bool = True
     interaction_timeout: int = 60
     allow_dm_responses: bool = True
-    
+
     # Discord settings
     discord_token: str = ""
-    allowed_channels: List[int] = Field(default_factory=list)
-    power_users: List[int] = Field(default_factory=list)
-    allowed_dm_users: List[int] = Field(default_factory=list)
-    bot_users: List[int] = Field(default_factory=list)
-    ignored_users: List[int] = Field(default_factory=list)
-    ignored_words: List[str] = Field(default_factory=list)
-    
+    allowed_channels: list[int] = Field(default_factory=list)
+    power_users: list[int] = Field(default_factory=list)
+    allowed_dm_users: list[int] = Field(default_factory=list)
+    bot_users: list[int] = Field(default_factory=list)
+    ignored_users: list[int] = Field(default_factory=list)
+    ignored_words: list[str] = Field(default_factory=list)
+
     # Nested configs
     sd: SDConfig = Field(default_factory=SDConfig)
     openclaw: OpenClawConfig = Field(default_factory=OpenClawConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     video: VideoConfig = Field(default_factory=VideoConfig)
     model_router: ModelRouterConfig = Field(default_factory=ModelRouterConfig)
-    
+
     # Legacy compatibility
     openapi_endpoint: str = "disabled"
     openapi_key: str = "password"
@@ -173,171 +186,196 @@ class JenniferConfig(BaseModel):
     secondary_openapi_endpoint: str = "disabled"
     secondary_openapi_key: str = "None"
     secondary_openai_model: str = "dolphin-llama3:8b"
-    
+
     @classmethod
     def load(cls, path: str = "config/config.json") -> "JenniferConfig":
-        """Load configuration from JSON file with migration support."""
+        """Load configuration from JSON file with migration support and ENV override."""
         config_path = Path(path)
-        
-        if not config_path.exists():
-            raise FileNotFoundError(f"Config file not found: {path}")
-        
-        with open(config_path, 'r', encoding='utf-8') as f:
-            raw = json.load(f)
-        
-        # Migrate from old flat format to new nested format
-        return cls._migrate_legacy(raw)
-    
+        raw = {}
+
+        if config_path.exists():
+            with open(config_path, encoding='utf-8') as f:
+                raw = json.load(f)
+
+        # Migrate from old flat format if needed
+        migrated_dict = cls._migrate_legacy_to_dict(raw)
+
+        # Merge in decrypted secrets from the vault
+        vault_secrets = vault.get_all_decrypted()
+        if vault_secrets:
+            # We recursively merge or just update top level if keys match Pydantic expectations
+            # For BaseSettings, top-level keys like JENNIFER_DISCORD_TOKEN will be handled
+            # but it's better to provide them in a way BaseSettings expects.
+            # We'll update the migrated_dict with any keys that match.
+            for k, v in vault_secrets.items():
+                if k.startswith("JENNIFER_"):
+                    # Strip prefix and handle nested keys if any, 
+                    # but simple update is safest for now.
+                    clean_k = k.replace("JENNIFER_", "").lower()
+                    if clean_k in migrated_dict:
+                        migrated_dict[clean_k] = v
+                else:
+                    migrated_dict[k] = v
+
+        # BaseSettings automatically handles environment variable overrides
+        config = cls(**migrated_dict)
+        return config
+
     @classmethod
     def _migrate_legacy(cls, raw: dict) -> "JenniferConfig":
-        """Migrate legacy flat config to new structure."""
+        """Legacy method for backward compatibility in tests."""
+        return cls(**cls._migrate_legacy_to_dict(raw))
+
+    @classmethod
+    def _migrate_legacy_to_dict(cls, raw: dict) -> dict:
+        """Migrate legacy flat config to new structure dict."""
         # Build fallback models list from numbered entries
         fallback_models = []
         for i in range(1, 10):
             key = f"OpenClawmodel{i}"
             if key in raw and raw[key]:
                 fallback_models.append(raw[key])
-        
+
         # Build endpoint lists
         model_endpoints = []
         for i in range(1, 10):
             key = f"OpenClawModelEndpoint{i}"
             if key in raw and raw[key]:
                 model_endpoints.append(raw[key])
-        
+
         embedding_endpoints = []
         for i in range(1, 10):
             key = f"OpenClawEmbeddingEndpoint{i}"
             if key in raw and raw[key]:
                 embedding_endpoints.append(raw[key])
-        
-        return cls(
-            name=raw.get("Name", "Jennifer"),
-            personality=raw.get("Personality", ""),
-            appearance=raw.get("Appearance", ""),
-            log_level=os.getenv("LOG_LEVEL", raw.get("LogLevel", "INFO")),
-            log_level_debug=raw.get("LogLevel1", "DEBUG"),
-            typing_delay=raw.get("TypingDelay", 1),
-            history_length=raw.get("History_Length", 12000),
-            only_when_called=raw.get("OnlyWhenCalled", True),
-            respond_to_mentions=raw.get("RespondToMentions", True),
-            interaction_timeout=raw.get("InteractionTimeout", 60),
-            allow_dm_responses=raw.get("AllowDMResponses", True),
-            discord_token=raw.get("DiscordToken", ""),
-            allowed_channels=raw.get("AllowedChannels", []),
-            power_users=raw.get("Power_Users", []),
-            allowed_dm_users=raw.get("AllowedDMUsers", []),
-            bot_users=raw.get("bot_user", []),
-            ignored_users=raw.get("IgnoredUsers", []),
-            ignored_words=raw.get("IgnoredWords", []),
-            sd=SDConfig(
-                backend=raw.get("SDBackend", "automatic1111"),
-                url=raw.get("SDURL", os.getenv("SD_URL", "")),
-                comfy_url=raw.get("SDComfyURL", os.getenv("SD_COMFY_URL", "")),
-                invoke_url=raw.get("SDInvokeURL", os.getenv("SD_INVOKE_URL", "")),
-                model=raw.get("SDmodel", "cyberrealistic_classic40"),
-                clip_skip=raw.get("SDClipSkip", 0),
-                cfg_scale=raw.get("SDConfig", 7.0),
-                height=raw.get("SDHeight", 1024),
-                width=raw.get("SDWidth", 512),
-                negative_prompt=raw.get("SDNegativePrompt", ""),
-                positive_prompt_prefix=raw.get("SDPositivePrompt", ""),
-                sampler=raw.get("SDSampler", "DPM++ 2M"),
-                scheduler=raw.get("SDScheduler", "automatic"),
-                steps=raw.get("SDSteps", 20),
-                openai_prompt=raw.get("SDOpenAI", ""),
-            ),
-            openclaw=OpenClawConfig(
-                gateway=raw.get("OpenClawGateway", os.getenv("OPENCLAW_GATEWAY", "")),
-                token=raw.get("OpenClawToken", ""),
-                device_token=raw.get("OpenClawDeviceToken", ""),
-                device_identity_path=raw.get("OpenClawDeviceIdentityPath", ""),
-                model=raw.get("OpenClawmodel", "chat"),
-                agent=raw.get("OpenClawAgent", ""),
-                async_mode=raw.get("OpenClawAsync", True),
-                bearer=raw.get("OpenClawBearer", "password"),
-                context_window=raw.get("OpenClawContextWindow", 10240),
-                embedding=raw.get("OpenClawEmbedding", "text-embedding-ada-002"),
-                embedding_dim=raw.get("OpenClawEmbeddingDim", 1024),
-                embedding_endpoint=raw.get("OpenClawEmbeddingEndpoint", os.getenv("OPENCLAW_EMBEDDING_ENDPOINT", "")),
-                embedding_endpoint_type=raw.get("OpenClawEmbeddingEndpointType", "openai"),
-                model_endpoint=raw.get("OpenClawModelEndpoint", os.getenv("OPENCLAW_MODEL_ENDPOINT", "")),
-                model_endpoint_type=raw.get("OpenClawModelEndpointType", "openai"),
-                personality=raw.get("OpenClawPersonality", raw.get("OpenClawPersona", "")),
-                system_prompt=raw.get("OpenClawSystemPrompt", ""),
-                use_assistant_message=raw.get("OpenClawUseAssistantMessage", False),
-                stream=raw.get("OpenClawStream", False),
-                timeout=raw.get("OpenClawtimeout", 600),
-                primer=raw.get("OpenClawPrimer", ""),
-                persona=raw.get("OpenClawPersona", ""),
-                fallback_models=fallback_models,
-                embedding_endpoints=embedding_endpoints,
-                model_endpoints=model_endpoints,
-            ),
-            voice=VoiceConfig(
-                silero_speaker=raw.get("SileroSpeaker", "en_107"),
-                openai_tts_backend=raw.get("OpenaiTTSBackend", "bark"),
-                openai_tts_voice_model=raw.get("OpenaiTTSVoiceModel", ""),
-                recognizer=raw.get("recognizer", "whisper"),
-            ),
-            video=VideoConfig(
-                backend=raw.get("VideoBackend", "zai"),
-                zai_api_key=raw.get("ZaiAPIKey", ""),
-                zai_api_endpoint=raw.get("ZaiAPIEndpoint", "https://api.z.ai/api/paas/v4"),
-                zai_model=raw.get("ZaiVideoModel", "CogVideoX-3"),
-                zai_resolution=raw.get("ZaiVideoResolution", "720p"),
-                zai_duration=raw.get("ZaiVideoDuration", 5),
-                framepack_url=raw.get("FramePackURL", "http://localhost:7860"),
-                framepack_model=raw.get("FramePackModel", "FramePack (Original)"),
-                framepack_steps=raw.get("FramePackSteps", 25),
-                framepack_width=raw.get("FramePackWidth", 640),
-                framepack_height=raw.get("FramePackHeight", 480),
-                framepack_video_length=raw.get("FramePackVideoLength", 4.0),
-                framepack_use_teacache=raw.get("FramePackUseTeaCache", True),
-                rate_limit_per_minute=raw.get("VideoRateLimit", 3),
-                max_prompt_length=raw.get("VideoMaxPromptLength", 500),
-            ),
-            model_router=ModelRouterConfig(
-                highspeed_model=raw.get("ModelRouterHighspeed", "zai/glm-4.7-flash"),
-                highspeed_fallbacks=raw.get("ModelRouterHighspeedFallbacks", []),
-                intelligence_model=raw.get("ModelRouterIntelligence", "moonshot/kimi-k2.5"),
-                intelligence_fallbacks=raw.get("ModelRouterIntelligenceFallbacks", [
+
+        return {
+            "name": raw.get("Name", "Jennifer"),
+            "personality": raw.get("Personality", ""),
+            "appearance": raw.get("Appearance", ""),
+            "log_level": raw.get("LogLevel", "INFO"),
+            "log_level_debug": raw.get("LogLevel1", "DEBUG"),
+            "typing_delay": raw.get("TypingDelay", 1),
+            "history_length": raw.get("History_Length", 12000),
+            "only_when_called": raw.get("OnlyWhenCalled", True),
+            "respond_to_mentions": raw.get("RespondToMentions", True),
+            "interaction_timeout": raw.get("InteractionTimeout", 60),
+            "allow_dm_responses": raw.get("AllowDMResponses", True),
+            "discord_token": raw.get("DiscordToken", ""),
+            "allowed_channels": raw.get("AllowedChannels", []),
+            "power_users": raw.get("Power_Users", []),
+            "allowed_dm_users": raw.get("AllowedDMUsers", []),
+            "bot_users": raw.get("bot_user", []),
+            "ignored_users": raw.get("IgnoredUsers", []),
+            "ignored_words": raw.get("IgnoredWords", []),
+            "sd": {
+                "backend": raw.get("SDBackend", "automatic1111"),
+                "url": raw.get("SDURL", ""),
+                "comfy_url": raw.get("SDComfyURL", ""),
+                "invoke_url": raw.get("SDInvokeURL", ""),
+                "model": raw.get("SDmodel", "cyberrealistic_classic40"),
+                "clip_skip": raw.get("SDClipSkip", 0),
+                "cfg_scale": raw.get("SDConfig", 7.0),
+                "height": raw.get("SDHeight", 1024),
+                "width": raw.get("SDWidth", 512),
+                "negative_prompt": raw.get("SDNegativePrompt", ""),
+                "positive_prompt_prefix": raw.get("SDPositivePrompt", ""),
+                "sampler": raw.get("SDSampler", "DPM++ 2M"),
+                "scheduler": raw.get("SDScheduler", "automatic"),
+                "steps": raw.get("SDSteps", 20),
+                "openai_prompt": raw.get("SDOpenAI", ""),
+            },
+            "openclaw": {
+                "gateway": raw.get("OpenClawGateway", ""),
+                "token": raw.get("OpenClawToken", ""),
+                "device_token": raw.get("OpenClawDeviceToken", ""),
+                "device_identity_path": raw.get("OpenClawDeviceIdentityPath", ""),
+                "model": raw.get("OpenClawmodel", "chat"),
+                "agent": raw.get("OpenClawAgent", ""),
+                "async_mode": raw.get("OpenClawAsync", True),
+                "bearer": raw.get("OpenClawBearer", "password"),
+                "context_window": raw.get("OpenClawContextWindow", 10240),
+                "embedding": raw.get("OpenClawEmbedding", "text-embedding-ada-002"),
+                "embedding_dim": raw.get("OpenClawEmbeddingDim", 1024),
+                "embedding_endpoint": raw.get("OpenClawEmbeddingEndpoint", ""),
+                "embedding_endpoint_type": raw.get("OpenClawEmbeddingEndpointType", "openai"),
+                "model_endpoint": raw.get("OpenClawModelEndpoint", ""),
+                "model_endpoint_type": raw.get("OpenClawModelEndpointType", "openai"),
+                "personality": raw.get("OpenClawPersonality", raw.get("OpenClawPersona", "")),
+                "system_prompt": raw.get("OpenClawSystemPrompt", ""),
+                "use_assistant_message": raw.get("OpenClawUseAssistantMessage", False),
+                "stream": raw.get("OpenClawStream", False),
+                "timeout": raw.get("OpenClawtimeout", 600),
+                "primer": raw.get("OpenClawPrimer", ""),
+                "persona": raw.get("OpenClawPersona", ""),
+                "fallback_models": fallback_models,
+                "embedding_endpoints": embedding_endpoints,
+                "model_endpoints": model_endpoints,
+            },
+            "voice": {
+                "silero_speaker": raw.get("SileroSpeaker", "en_107"),
+                "openai_tts_backend": raw.get("OpenaiTTSBackend", "bark"),
+                "openai_tts_voice_model": raw.get("OpenaiTTSVoiceModel", ""),
+                "recognizer": raw.get("recognizer", "whisper"),
+            },
+            "video": {
+                "backend": raw.get("VideoBackend", "zai"),
+                "zai_api_key": raw.get("ZaiAPIKey", ""),
+                "zai_api_endpoint": raw.get("ZaiAPIEndpoint", "https://api.z.ai/api/paas/v4"),
+                "zai_model": raw.get("ZaiVideoModel", "CogVideoX-3"),
+                "zai_resolution": raw.get("ZaiVideoResolution", "720p"),
+                "zai_duration": raw.get("ZaiVideoDuration", 5),
+                "framepack_url": raw.get("FramePackURL", "http://localhost:7860"),
+                "framepack_model": raw.get("FramePackModel", "FramePack (Original)"),
+                "framepack_steps": raw.get("FramePackSteps", 25),
+                "framepack_width": raw.get("FramePackWidth", 640),
+                "framepack_height": raw.get("FramePackHeight", 480),
+                "framepack_video_length": raw.get("FramePackVideoLength", 4.0),
+                "framepack_use_teacache": raw.get("FramePackUseTeaCache", True),
+                "rate_limit_per_minute": raw.get("VideoRateLimit", 3),
+                "max_prompt_length": raw.get("VideoMaxPromptLength", 500),
+            },
+            "model_router": {
+                "highspeed_model": raw.get("ModelRouterHighspeed", "zai/glm-4.7-flash"),
+                "highspeed_fallbacks": raw.get("ModelRouterHighspeedFallbacks", []),
+                "intelligence_model": raw.get("ModelRouterIntelligence", "moonshot/kimi-k2.5"),
+                "intelligence_fallbacks": raw.get("ModelRouterIntelligenceFallbacks", [
                     "zai/glm-4.7-flash",
                 ]),
-                uncensored_model=raw.get("ModelRouterUncensored", "venice/venice-uncensored-role-play"),
-                uncensored_fallbacks=raw.get("ModelRouterUncensoredFallbacks", [
+                "uncensored_model": raw.get("ModelRouterUncensored", "venice/venice-uncensored-role-play"),
+                "uncensored_fallbacks": raw.get("ModelRouterUncensoredFallbacks", [
                     "venice/olafangensan-glm-4.7-flash-heretic",
                     "localai/Qwen3-14B-Nexa-Uncensored",
                 ]),
-            ),
-            openapi_endpoint=raw.get("OpenAPIEndpoint", "disabled"),
-            openapi_key=raw.get("OpenAPIKey", "password"),
-            openai_model=raw.get("OpenaiModel", ""),
-            secondary_openapi_endpoint=raw.get("SecondaryOpenAPIEndpoint", "disabled"),
-            secondary_openapi_key=raw.get("SecondaryOpenAPIKey", "None"),
-            secondary_openai_model=raw.get("SecondaryOpenaiModel", ""),
-        )
-    
+            },
+            "openapi_endpoint": raw.get("OpenAPIEndpoint", "disabled"),
+            "openapi_key": raw.get("OpenAPIKey", "password"),
+            "openai_model": raw.get("OpenaiModel", ""),
+            "secondary_openapi_endpoint": raw.get("SecondaryOpenAPIEndpoint", "disabled"),
+            "secondary_openapi_key": raw.get("SecondaryOpenAPIKey", "None"),
+            "secondary_openai_model": raw.get("SecondaryOpenaiModel", ""),
+        }
+
     def get_history_file_name(self) -> str:
         """Generate history filename based on bot name."""
         return f"{self.name}_message_histories.json"
-    
+
     def is_power_user(self, user_id: int) -> bool:
         """Check if user is a power user."""
         return user_id in self.power_users
-    
+
     def is_allowed_channel(self, channel_id: int) -> bool:
         """Check if channel is allowed."""
         return channel_id in self.allowed_channels
-    
+
     def is_ignored_user(self, user_id: int) -> bool:
         """Check if user should be ignored."""
         return user_id in self.ignored_users
-    
+
     # =========================================================================
     # Backward Compatibility - Dict-style access for legacy code
     # =========================================================================
-    
+
     def __getitem__(self, key: str):
         """Allow dict-style access: config['key']"""
         # Map legacy keys to new attribute names
@@ -432,7 +470,7 @@ class JenniferConfig(BaseModel):
             "VideoRateLimit": "video.rate_limit_per_minute",
             "VideoMaxPromptLength": "video.max_prompt_length",
         }
-        
+
         if key in key_map:
             attr_path = key_map[key]
             # Handle nested attributes like "sd.url"
@@ -440,24 +478,24 @@ class JenniferConfig(BaseModel):
             for part in attr_path.split("."):
                 value = getattr(value, part)
             return value
-        
+
         # Try direct attribute access
         if hasattr(self, key):
             return getattr(self, key)
-        
+
         # Check extra config for dynamically set keys
         if hasattr(self, '_extra_config') and key in self._extra_config:
             return self._extra_config[key]
-        
+
         raise KeyError(f"Config key not found: {key}")
-    
+
     def get(self, key: str, default=None):
         """Allow dict-style .get() method: config.get('key', default)"""
         try:
             return self[key]
         except KeyError:
             return default
-    
+
     def __contains__(self, key: str) -> bool:
         """Allow 'in' operator: 'key' in config"""
         # Check _extra_config first
@@ -468,7 +506,7 @@ class JenniferConfig(BaseModel):
             return True
         except KeyError:
             return False
-    
+
     def __setitem__(self, key: str, value):
         """Allow dict-style assignment: config['key'] = value"""
         # Map legacy keys to new attribute names
@@ -481,7 +519,7 @@ class JenniferConfig(BaseModel):
             "SDInvokeURL": "sd.invoke_url",
             "SDBackend": "sd.backend",
         }
-        
+
         if key in key_map:
             attr_path = key_map[key]
             # Handle nested attributes
@@ -497,7 +535,7 @@ class JenniferConfig(BaseModel):
             if not hasattr(self, '_extra_config'):
                 object.__setattr__(self, '_extra_config', {})
             self._extra_config[key] = value
-    
+
     def get_extra(self, key: str, default=None):
         """Get value from extra config storage."""
         if hasattr(self, '_extra_config'):
@@ -506,7 +544,7 @@ class JenniferConfig(BaseModel):
 
 
 # Global config instance
-_config: Optional[JenniferConfig] = None
+_config: JenniferConfig | None = None
 
 
 def load_config(path: str = "config/config.json") -> JenniferConfig:
@@ -546,11 +584,26 @@ async def watch_config(
         poll_interval: Seconds between mtime checks (default 5).
     """
     config_path = Path(path)
+    warning_cooldown_seconds = 60.0
+    last_warning_at = 0.0
+    in_error_state = False
+
+    def log_transient_warning(exc: Exception) -> None:
+        nonlocal last_warning_at, in_error_state
+        now = time.monotonic()
+        in_error_state = True
+        if now - last_warning_at >= warning_cooldown_seconds:
+            logger.warning(f"Config watcher transient filesystem error for {path}: {exc}")
+            last_warning_at = now
+
     try:
         last_mtime = config_path.stat().st_mtime
     except FileNotFoundError:
         logger.error(f"watch_config: file not found: {path}")
         return
+    except OSError as exc:
+        log_transient_warning(exc)
+        last_mtime = None
 
     logger.info(f"Config watcher started for {path} (poll every {poll_interval}s)")
 
@@ -558,6 +611,25 @@ async def watch_config(
         await asyncio.sleep(poll_interval)
         try:
             current_mtime = config_path.stat().st_mtime
+        except asyncio.CancelledError:
+            logger.info("Config watcher cancelled")
+            break
+        except FileNotFoundError as exc:
+            log_transient_warning(exc)
+            continue
+        except OSError as exc:
+            log_transient_warning(exc)
+            continue
+
+        try:
+            if in_error_state:
+                logger.info(f"Config watcher access restored for {path}")
+                in_error_state = False
+
+            if last_mtime is None:
+                last_mtime = current_mtime
+                continue
+
             if current_mtime == last_mtime:
                 continue
             last_mtime = current_mtime
@@ -580,7 +652,6 @@ async def watch_config(
                     await result
             except Exception as cb_err:
                 logger.error(f"Config reload callback raised an error: {cb_err}")
-
         except asyncio.CancelledError:
             logger.info("Config watcher cancelled")
             break

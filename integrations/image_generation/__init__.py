@@ -21,20 +21,20 @@ Usage:
     print(f"Using backend: {info['name']}")
 """
 
-from integrations.image_generation.base_adapter import BaseImageAdapter
-from integrations.image_generation.automatic1111_adapter import Automatic1111Adapter
-from integrations.image_generation.comfyui_adapter import ComfyUIAdapter
-from integrations.image_generation.invokeai_adapter import InvokeAIAdapter
-from integrations.image_generation.prompt_formatter import PromptFormatter
 from integrations.image_generation.adapter_factory import (
     create_adapter,
     create_adapter_from_config,
     get_adapter,
     get_available_adapters,
-    register_adapter,
-    is_backend_supported,
     get_backend_display_name,
+    is_backend_supported,
+    register_adapter,
 )
+from integrations.image_generation.automatic1111_adapter import Automatic1111Adapter
+from integrations.image_generation.base_adapter import BaseImageAdapter
+from integrations.image_generation.comfyui_adapter import ComfyUIAdapter
+from integrations.image_generation.invokeai_adapter import InvokeAIAdapter
+from integrations.image_generation.prompt_formatter import PromptFormatter
 
 __all__ = [
     # Base classes

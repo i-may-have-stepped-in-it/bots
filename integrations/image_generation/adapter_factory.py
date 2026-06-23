@@ -6,16 +6,15 @@ based on configuration. It supports Automatic1111, ComfyUI, and InvokeAI backend
 """
 
 import logging
-from typing import Dict, Any, Type
+from typing import Any
 
-from integrations.image_generation.base_adapter import BaseImageAdapter
 from integrations.image_generation.automatic1111_adapter import Automatic1111Adapter
+from integrations.image_generation.base_adapter import BaseImageAdapter
 from integrations.image_generation.comfyui_adapter import ComfyUIAdapter
 from integrations.image_generation.invokeai_adapter import InvokeAIAdapter
 
-
 # Registry of available adapters
-ADAPTER_REGISTRY: Dict[str, Type[BaseImageAdapter]] = {
+ADAPTER_REGISTRY: dict[str, type[BaseImageAdapter]] = {
     "automatic1111": Automatic1111Adapter,
     "auto": Automatic1111Adapter,  # Alias
     "a1111": Automatic1111Adapter,  # Alias
@@ -39,7 +38,7 @@ def get_available_adapters() -> list:
 
 def create_adapter(
     backend: str,
-    config: Dict[str, Any]
+    config: dict[str, Any]
 ) -> BaseImageAdapter:
     """
     Create an image generation adapter based on the backend name.
@@ -55,7 +54,7 @@ def create_adapter(
         ValueError: If the backend is not supported
     """
     backend_lower = backend.lower().strip()
-    
+
     if backend_lower not in ADAPTER_REGISTRY:
         available = ", ".join(sorted(set(cls.__name__ for cls in ADAPTER_REGISTRY.values())))
         error_msg = (
@@ -65,15 +64,15 @@ def create_adapter(
         )
         logging.error(error_msg)
         raise ValueError(error_msg)
-    
+
     adapter_class = ADAPTER_REGISTRY[backend_lower]
     adapter = adapter_class(config)
-    
+
     logging.info(f"Created adapter '{adapter.name}' for backend '{backend}'")
     return adapter
 
 
-def create_adapter_from_config(config: Dict[str, Any]) -> BaseImageAdapter:
+def create_adapter_from_config(config: dict[str, Any]) -> BaseImageAdapter:
     """
     Create an adapter using the backend specified in the configuration.
     
@@ -119,7 +118,7 @@ def create_adapter_from_config(config: Dict[str, Any]) -> BaseImageAdapter:
 
 def register_adapter(
     name: str,
-    adapter_class: Type[BaseImageAdapter],
+    adapter_class: type[BaseImageAdapter],
     aliases: list = None
 ) -> None:
     """
@@ -133,11 +132,11 @@ def register_adapter(
         aliases: Optional list of alias names for the adapter
     """
     ADAPTER_REGISTRY[name.lower()] = adapter_class
-    
+
     if aliases:
         for alias in aliases:
             ADAPTER_REGISTRY[alias.lower()] = adapter_class
-    
+
     logging.info(f"Registered adapter '{name}' with aliases: {aliases}")
 
 
@@ -174,12 +173,12 @@ def get_backend_display_name(backend: str) -> str:
         "invokeai": "InvokeAI",
         "invoke": "InvokeAI",
     }
-    
+
     return display_names.get(backend.lower(), backend)
 
 
 # Convenience function for quick adapter creation
-def get_adapter(config: Dict[str, Any]) -> BaseImageAdapter:
+def get_adapter(config: dict[str, Any]) -> BaseImageAdapter:
     """
     Get an adapter instance from configuration.
     

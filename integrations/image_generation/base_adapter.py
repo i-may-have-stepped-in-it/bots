@@ -7,8 +7,8 @@ Stable Diffusion backends (Automatic1111, ComfyUI, InvokeAI, etc.).
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple
-import io
+from typing import Any
+
 from PIL import Image
 
 
@@ -19,8 +19,8 @@ class BaseImageAdapter(ABC):
     All image generation backends must implement this interface to ensure
     consistent behavior across different APIs.
     """
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: dict[str, Any]):
         """
         Initialize the adapter with configuration.
         
@@ -28,15 +28,15 @@ class BaseImageAdapter(ABC):
             config: Dictionary containing configuration settings
         """
         self.config = config
-    
+
     @property
     @abstractmethod
     def name(self) -> str:
         """Return the name of the adapter/backend."""
         pass
-    
+
     @abstractmethod
-    def prepare_payload(self, prompt: str, upscale: bool = False, **kwargs) -> Dict[str, Any]:
+    def prepare_payload(self, prompt: str, upscale: bool = False, **kwargs) -> dict[str, Any]:
         """
         Prepare the JSON payload for the image generation API.
         
@@ -49,7 +49,7 @@ class BaseImageAdapter(ABC):
             Dictionary containing the API payload
         """
         pass
-    
+
     @abstractmethod
     def get_generation_endpoint(self) -> str:
         """
@@ -59,9 +59,9 @@ class BaseImageAdapter(ABC):
             Full URL for the txt2img endpoint
         """
         pass
-    
+
     @abstractmethod
-    def process_response(self, response: Dict[str, Any]) -> Image.Image:
+    def process_response(self, response: dict[str, Any]) -> Image.Image:
         """
         Process the API response and extract the generated image.
         
@@ -75,7 +75,7 @@ class BaseImageAdapter(ABC):
             ValueError: If the response cannot be processed
         """
         pass
-    
+
     @abstractmethod
     def get_options_endpoint(self) -> str:
         """
@@ -85,7 +85,7 @@ class BaseImageAdapter(ABC):
             Full URL for the options endpoint
         """
         pass
-    
+
     @abstractmethod
     def get_models_endpoint(self) -> str:
         """
@@ -95,9 +95,9 @@ class BaseImageAdapter(ABC):
             Full URL for the models endpoint
         """
         pass
-    
+
     @abstractmethod
-    def get_refresh_models_endpoint(self) -> Optional[str]:
+    def get_refresh_models_endpoint(self) -> str | None:
         """
         Return the API endpoint URL for refreshing model list.
         
@@ -105,9 +105,9 @@ class BaseImageAdapter(ABC):
             Full URL for the refresh endpoint, or None if not supported
         """
         pass
-    
+
     @abstractmethod
-    def parse_current_model(self, options: Dict[str, Any]) -> Optional[str]:
+    def parse_current_model(self, options: dict[str, Any]) -> str | None:
         """
         Extract the current model checkpoint from options response.
         
@@ -118,9 +118,9 @@ class BaseImageAdapter(ABC):
             Current model checkpoint name, or None if not found
         """
         pass
-    
+
     @abstractmethod
-    def create_model_switch_payload(self, model_name: str) -> Dict[str, Any]:
+    def create_model_switch_payload(self, model_name: str) -> dict[str, Any]:
         """
         Create the payload for switching models.
         
@@ -131,7 +131,7 @@ class BaseImageAdapter(ABC):
             Dictionary containing the model switch payload
         """
         pass
-    
+
     @abstractmethod
     def parse_models_list(self, models_data: Any) -> list:
         """
@@ -144,7 +144,7 @@ class BaseImageAdapter(ABC):
             List of model names
         """
         pass
-    
+
     def get_base_url(self) -> str:
         """
         Get the base URL for the API.
@@ -156,7 +156,7 @@ class BaseImageAdapter(ABC):
         url = self.config.get("SDURL", "").rstrip("/")
         logging.debug(f"get_base_url() returning: {url}, config type: {type(self.config)}")
         return url
-    
+
     def format_prompt(self, prompt: str) -> str:
         """
         Format the prompt by combining with positive prompt from config.
